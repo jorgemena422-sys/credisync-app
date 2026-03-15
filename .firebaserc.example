@@ -1,0 +1,6 @@
+-- Snapshot .firebaserc content
+{
+  "projects": {
+    "default": "your-firebase-project-id"
+  }
+}
