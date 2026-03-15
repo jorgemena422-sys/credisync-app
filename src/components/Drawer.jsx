@@ -1,86 +1,43 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect } from 'react';
+import { Badge } from './Layout';
 
-function getDrawerBadge(title) {
-    if (!title) return 'CS';
-    const parts = title
-        .split(' ')
-        .map(part => part.trim())
-        .filter(Boolean);
-
-    return parts.slice(0, 2).map(part => part[0]?.toUpperCase() || '').join('') || 'CS';
-}
-
-export default function Drawer({ isOpen, onClose, title, children, className = '' }) {
-    const badge = useMemo(() => getDrawerBadge(title), [title]);
-
-    useEffect(() => {
-        if (isOpen) {
-            document.body.classList.add('drawer-open');
-        } else {
-            document.body.classList.remove('drawer-open');
-        }
-        return () => document.body.classList.remove('drawer-open');
-    }, [isOpen]);
-
-    useEffect(() => {
-        if (!isOpen) return undefined;
-
-        const handleKeyDown = (event) => {
-            if (event.key === 'Escape') {
-                onClose();
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, onClose]);
-
-    if (!isOpen) {
-        return (
-            <>
-                <div className="drawer-overlay" />
-                <aside className="drawer" aria-hidden="true" />
-            </>
-        );
+const Drawer = ({ isOpen, onClose, title, children }) => {
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    if (isOpen) {
+      document.addEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'hidden';
     }
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen, onClose]);
 
-    return (
-        <>
-            <div
-                className={`drawer-overlay ${isOpen ? 'open' : ''}`}
-                onClick={onClose}
-                aria-hidden="true"
-            />
-            <aside
-                className={`drawer ${className} ${isOpen ? 'open' : ''}`.trim()}
-                aria-hidden={!isOpen}
-                role="dialog"
-                aria-modal="true"
-                aria-label={title}
-            >
-                <div className="drawer-glow drawer-glow-top" aria-hidden="true" />
-                <div className="drawer-glow drawer-glow-bottom" aria-hidden="true" />
-                <div className="drawer-head">
-                    <div className="drawer-title-group">
-                        <div className="drawer-badge" aria-hidden="true">{badge}</div>
-                        <div className="drawer-title-copy">
-                            <p className="eyebrow">Panel lateral</p>
-                            <h3>{title}</h3>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        className="drawer-close"
-                        onClick={onClose}
-                        aria-label="Cerrar panel"
-                    >
-                        <span className="material-symbols-outlined">close</span>
-                    </button>
-                </div>
-                <div className="drawer-body">
-                    {children}
-                </div>
-            </aside>
-        </>
-    );
-}
+  if (!isOpen) return null;
+
+  return (
+    <div className="drawer-overlay" onClick={onClose}>
+      <div className="drawer-content animate-slide-in" onClick={e => e.stopPropagation()}>
+        <div className="drawer-header">
+          <div className="drawer-header-title">
+            <h2>{title}</h2>
+            <Badge type="secondary" text="NUEVO" />
+          </div>
+          <button className="drawer-close" onClick={onClose}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="drawer-body">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Drawer;
