@@ -1,0 +1,45 @@
+{
+  "name": "credisync",
+  "version": "1.0.0",
+  "description": "Aplicacion web de gestion de prestamos en frontend puro (HTML + CSS + JavaScript), con persistencia local usando `localStorage`.",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:client\" \"npm:dev:server\"",
+    "dev:client": "set VITE_CACHE_DIR=.vite-cache-local&& vite",
+    "dev:server": "node server/index.js",
+    "build": "set VITE_CACHE_DIR=.vite-cache-local&& vite build",
+    "preview": "vite preview",
+    "start": "node server/index.js",
+    "deploy:backend": "gcloud run deploy credisync-api --source . --region us-central1 --allow-unauthenticated",
+    "deploy:push-scheduler": "node scripts/deploy-push-scheduler.mjs",
+    "deploy:all": "npm run build && npm run deploy:backend && firebase deploy --only hosting",
+    "smoke:phase1": "node scripts/smoke-phase1.mjs",
+    "smoke:subscriptions": "node scripts/smoke-subscriptions.mjs",
+    "smoke:billing": "node scripts/smoke-billing-integrity.mjs",
+    "check:phase0": "node scripts/check-phase0.mjs",
+    "test:push-daily": "node scripts/test-push-daily-summary.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.4",
+    "concurrently": "^9.1.2",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.99.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router-dom": "^7.13.1",
+    "web-push": "^3.6.7"
+  }
+}

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Reports &amp; Analytics | MicroLend Admin</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#1142d4",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101522",
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100">
+<div class="flex min-h-screen">
+<!-- Sidebar Navigation -->
+<aside class="w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hidden lg:flex flex-col fixed h-full">
+<div class="p-6 flex items-center gap-3">
+<div class="bg-primary rounded-lg size-10 flex items-center justify-center text-white">
+<span class="material-symbols-outlined">account_balance</span>
+</div>
+<div>
+<h1 class="text-slate-900 dark:text-white text-base font-bold leading-none">MicroLend</h1>
+<p class="text-slate-500 dark:text-slate-400 text-xs mt-1">Loan Management</p>
+</div>
+</div>
+<nav class="flex-1 px-4 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm font-medium">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined">payments</span>
+<span class="text-sm font-medium">Loans</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined">group</span>
+<span class="text-sm font-medium">Borrowers</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 bg-primary/10 text-primary rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">bar_chart</span>
+<span class="text-sm font-medium">Reports</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-sm font-medium">Settings</span>
+</a>
+</nav>
+<div class="p-4 border-t border-slate-200 dark:border-slate-800">
+<div class="flex items-center gap-3 p-2">
+<div class="size-8 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+<img alt="User profile" data-alt="User avatar for profile section" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDg6kj7Mo4EtxjO9HRAUzHEtUKwpibn8GQq7sTtkF-KzfghQ7ZdCsIn59ndYH-89NwcjRy68IibQgRuYw9fJFk6nKZA4vI6fsC6wWgSL192Nfaig9Qqc19T4SMGgMhiX-623B4-Vja_y85tHiaXAMMfYg-d7o22eo_XWN15vsBzuulvyMcItDrgcDahtRlV-QUs79oEXaCCqIV1grzBNGPwo8konTuesq6E3CIF-xiVMQo4uweB35BLrvIH1gMA9uWi-XhB6uzYyNny"/>
+</div>
+<div class="flex-1 overflow-hidden">
+<p class="text-sm font-bold truncate">Alex Morgan</p>
+<p class="text-xs text-slate-500 truncate">Admin</p>
+</div>
+<span class="material-symbols-outlined text-slate-400 text-sm">logout</span>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 lg:ml-64 p-4 lg:p-8">
+<!-- Top Header -->
+<header class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+<div>
+<h2 class="text-2xl font-black tracking-tight text-slate-900 dark:text-white">Reports &amp; Analytics</h2>
+<p class="text-slate-500 dark:text-slate-400 text-sm">Analyze your microloan portfolio health and profitability</p>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 gap-2 shadow-sm">
+<span class="material-symbols-outlined text-slate-400 text-sm">calendar_today</span>
+<span class="text-sm font-medium">Oct 1, 2023 - Oct 31, 2023</span>
+<span class="material-symbols-outlined text-slate-400 text-sm">expand_more</span>
+</div>
+<div class="flex gap-2">
+<button class="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+<span class="material-symbols-outlined text-lg">description</span>
+                            Excel
+                        </button>
+<button class="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined text-lg">picture_as_pdf</span>
+                            PDF
+                        </button>
+</div>
+</div>
+</header>
+<!-- Stats Overview -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+<div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+<div class="flex justify-between items-start mb-4">
+<div class="p-2 bg-primary/10 rounded-lg">
+<span class="material-symbols-outlined text-primary">account_balance_wallet</span>
+</div>
+<span class="text-emerald-500 text-xs font-bold flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">trending_up</span> +12.5%
+                        </span>
+</div>
+<h3 class="text-slate-500 dark:text-slate-400 text-sm font-medium">Total Amount Lent</h3>
+<p class="text-2xl font-bold mt-1 text-slate-900 dark:text-white">$142,500.00</p>
+</div>
+<div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+<div class="flex justify-between items-start mb-4">
+<div class="p-2 bg-emerald-500/10 rounded-lg">
+<span class="material-symbols-outlined text-emerald-500">payments</span>
+</div>
+<span class="text-emerald-500 text-xs font-bold flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">trending_up</span> +8.2%
+                        </span>
+</div>
+<h3 class="text-slate-500 dark:text-slate-400 text-sm font-medium">Total Collected</h3>
+<p class="text-2xl font-bold mt-1 text-slate-900 dark:text-white">$98,240.50</p>
+</div>
+<div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+<div class="flex justify-between items-start mb-4">
+<div class="p-2 bg-red-500/10 rounded-lg">
+<span class="material-symbols-outlined text-red-500">warning</span>
+</div>
+<span class="text-red-500 text-xs font-bold flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">trending_up</span> +2.1%
+                        </span>
+</div>
+<h3 class="text-slate-500 dark:text-slate-400 text-sm font-medium">Total Delinquent</h3>
+<p class="text-2xl font-bold mt-1 text-slate-900 dark:text-white">$12,450.00</p>
+</div>
+</div>
+<!-- Lending Performance Chart Section -->
+<div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
+<div class="xl:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+<div class="flex items-center justify-between mb-6">
+<h3 class="text-lg font-bold text-slate-900 dark:text-white">Lending Performance</h3>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<span class="size-2 rounded-full bg-primary"></span>
+<span class="text-xs text-slate-500">Lent</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="size-2 rounded-full bg-emerald-500"></span>
+<span class="text-xs text-slate-500">Collected</span>
+</div>
+</div>
+</div>
+<div class="h-64 flex items-end justify-between gap-2">
+<!-- Simplified Visual Graph Representation -->
+<div class="flex-1 flex flex-col justify-end gap-1">
+<div class="flex gap-1 items-end">
+<div class="w-full bg-primary rounded-t-sm" style="height: 60%"></div>
+<div class="w-full bg-emerald-500 rounded-t-sm" style="height: 40%"></div>
+</div>
+<span class="text-[10px] text-slate-400 text-center mt-2">Mon</span>
+</div>
+<div class="flex-1 flex flex-col justify-end gap-1">
+<div class="flex gap-1 items-end">
+<div class="w-full bg-primary rounded-t-sm" style="height: 75%"></div>
+<div class="w-full bg-emerald-500 rounded-t-sm" style="height: 55%"></div>
+</div>
+<span class="text-[10px] text-slate-400 text-center mt-2">Tue</span>
+</div>
+<div class="flex-1 flex flex-col justify-end gap-1">
+<div class="flex gap-1 items-end">
+<div class="w-full bg-primary rounded-t-sm" style="height: 45%"></div>
+<div class="w-full bg-emerald-500 rounded-t-sm" style="height: 65%"></div>
+</div>
+<span class="text-[10px] text-slate-400 text-center mt-2">Wed</span>
+</div>
+<div class="flex-1 flex flex-col justify-end gap-1">
+<div class="flex gap-1 items-end">
+<div class="w-full bg-primary rounded-t-sm" style="height: 90%"></div>
+<div class="w-full bg-emerald-500 rounded-t-sm" style="height: 70%"></div>
+</div>
+<span class="text-[10px] text-slate-400 text-center mt-2">Thu</span>
+</div>
+<div class="flex-1 flex flex-col justify-end gap-1">
+<div class="flex gap-1 items-end">
+<div class="w-full bg-primary rounded-t-sm" style="height: 60%"></div>
+<div class="w-full bg-emerald-500 rounded-t-sm" style="height: 45%"></div>
+</div>
+<span class="text-[10px] text-slate-400 text-center mt-2">Fri</span>
+</div>
+<div class="flex-1 flex flex-col justify-end gap-1">
+<div class="flex gap-1 items-end">
+<div class="w-full bg-primary rounded-t-sm" style="height: 30%"></div>
+<div class="w-full bg-emerald-500 rounded-t-sm" style="height: 20%"></div>
+</div>
+<span class="text-[10px] text-slate-400 text-center mt-2">Sat</span>
+</div>
+<div class="flex-1 flex flex-col justify-end gap-1">
+<div class="flex gap-1 items-end">
+<div class="w-full bg-primary rounded-t-sm" style="height: 25%"></div>
+<div class="w-full bg-emerald-500 rounded-t-sm" style="height: 15%"></div>
+</div>
+<span class="text-[10px] text-slate-400 text-center mt-2">Sun</span>
+</div>
+</div>
+</div>
+<!-- Profitability Summary -->
+<div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+<h3 class="text-lg font-bold text-slate-900 dark:text-white mb-6">Monthly Profitability</h3>
+<div class="space-y-4">
+<div class="flex items-center justify-between py-3 border-b border-slate-100 dark:border-slate-800">
+<div class="flex items-center gap-3">
+<div class="size-2 rounded-full bg-blue-500"></div>
+<span class="text-sm text-slate-600 dark:text-slate-400">Interest Earned</span>
+</div>
+<span class="text-sm font-bold">$18,430.00</span>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-slate-100 dark:border-slate-800">
+<div class="flex items-center gap-3">
+<div class="size-2 rounded-full bg-purple-500"></div>
+<span class="text-sm text-slate-600 dark:text-slate-400">Late Fees</span>
+</div>
+<span class="text-sm font-bold">$2,105.00</span>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-slate-100 dark:border-slate-800">
+<div class="flex items-center gap-3">
+<div class="size-2 rounded-full bg-red-500"></div>
+<span class="text-sm text-slate-600 dark:text-slate-400">Bad Debts (Provision)</span>
+</div>
+<span class="text-sm font-bold text-red-500">($4,200.00)</span>
+</div>
+<div class="flex items-center justify-between py-3 border-b border-slate-100 dark:border-slate-800">
+<div class="flex items-center gap-3">
+<div class="size-2 rounded-full bg-slate-400"></div>
+<span class="text-sm text-slate-600 dark:text-slate-400">Operational Costs</span>
+</div>
+<span class="text-sm font-bold">($1,500.00)</span>
+</div>
+<div class="flex items-center justify-between pt-4">
+<span class="text-base font-black text-slate-900 dark:text-white uppercase tracking-wider">Net Profit</span>
+<span class="text-xl font-black text-primary">$14,835.00</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Delinquency Report Table -->
+<div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+<div class="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+<div>
+<h3 class="text-lg font-bold text-slate-900 dark:text-white">Delinquency Report</h3>
+<p class="text-xs text-slate-500 mt-1">High-risk loans requiring immediate attention</p>
+</div>
+<button class="text-primary text-sm font-bold hover:underline">View All</button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left">
+<thead class="bg-slate-50 dark:bg-slate-800/50">
+<tr>
+<th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Customer</th>
+<th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Loan Details</th>
+<th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">Days Overdue</th>
+<th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Balance Due</th>
+<th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Risk Level</th>
+<th class="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider"></th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+<tr class="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-bold">JD</div>
+<div>
+<p class="text-sm font-bold">John Doe</p>
+<p class="text-xs text-slate-500">#CUST-8291</p>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div>
+<p class="text-sm font-medium">Business Expansion</p>
+<p class="text-xs text-slate-500">$5,000.00 @ 12%</p>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-center">
+<span class="text-sm font-bold text-red-600">45 Days</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<p class="text-sm font-bold">$1,240.00</p>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-2 py-1 text-[10px] font-bold bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 rounded-full uppercase">High Risk</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right">
+<button class="material-symbols-outlined text-slate-400 hover:text-primary transition-colors">more_vert</button>
+</td>
+</tr>
+<tr class="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-bold">AS</div>
+<div>
+<p class="text-sm font-bold">Alice Smith</p>
+<p class="text-xs text-slate-500">#CUST-9021</p>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div>
+<p class="text-sm font-medium">Personal Loan</p>
+<p class="text-xs text-slate-500">$2,500.00 @ 15%</p>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-center">
+<span class="text-sm font-bold text-orange-600">18 Days</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<p class="text-sm font-bold">$450.00</p>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-2 py-1 text-[10px] font-bold bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400 rounded-full uppercase">Moderate</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right">
+<button class="material-symbols-outlined text-slate-400 hover:text-primary transition-colors">more_vert</button>
+</td>
+</tr>
+<tr class="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-xs font-bold">MB</div>
+<div>
+<p class="text-sm font-bold">Marcus Brown</p>
+<p class="text-xs text-slate-500">#CUST-7742</p>
+</div>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div>
+<p class="text-sm font-medium">Equipment Finance</p>
+<p class="text-xs text-slate-500">$10,000.00 @ 10%</p>
+</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-center">
+<span class="text-sm font-bold text-orange-600">12 Days</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<p class="text-sm font-bold">$2,800.00</p>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="px-2 py-1 text-[10px] font-bold bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400 rounded-full uppercase">Moderate</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-right">
+<button class="material-symbols-outlined text-slate-400 hover:text-primary transition-colors">more_vert</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</main>
+</div>
+</body></html>

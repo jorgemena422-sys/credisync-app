@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Login - MicroLoan Manager</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#1142d4",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101522",
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display min-h-screen flex flex-col">
+<!-- Top Navigation Bar -->
+<header class="flex items-center justify-between whitespace-nowrap border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 md:px-10 py-3 w-full">
+<div class="flex items-center gap-4 text-slate-900 dark:text-slate-100">
+<div class="text-primary">
+<span class="material-symbols-outlined text-3xl">account_balance</span>
+</div>
+<h2 class="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-tight">MicroLoan Manager</h2>
+</div>
+<div class="flex items-center gap-4">
+<span class="hidden md:inline text-sm text-slate-600 dark:text-slate-400">New to the platform?</span>
+<button class="flex min-w-[84px] cursor-pointer items-center justify-center rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold hover:bg-opacity-90 transition-colors">
+                Sign Up
+            </button>
+</div>
+</header>
+<!-- Main Content: Login Card -->
+<main class="flex-1 flex items-center justify-center p-6">
+<div class="w-full max-w-[480px] bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-slate-200/50 dark:shadow-none border border-slate-200 dark:border-slate-800 p-8 md:p-12">
+<div class="text-center mb-10">
+<div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
+<span class="material-symbols-outlined text-3xl">lock_open</span>
+</div>
+<h1 class="text-slate-900 dark:text-slate-100 text-3xl font-bold leading-tight mb-2">Welcome Back</h1>
+<p class="text-slate-500 dark:text-slate-400 text-base">Log in to manage your microloan portfolio</p>
+</div>
+<form class="space-y-6">
+<!-- Email Address Field -->
+<div class="flex flex-col gap-2">
+<label class="text-slate-900 dark:text-slate-100 text-sm font-semibold">Email Address</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl">mail</span>
+<input class="form-input w-full pl-12 pr-4 py-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:border-primary focus:ring-1 focus:ring-primary placeholder:text-slate-400" placeholder="name@company.com" required="" type="email"/>
+</div>
+</div>
+<!-- Password Field -->
+<div class="flex flex-col gap-2">
+<div class="flex justify-between items-center">
+<label class="text-slate-900 dark:text-slate-100 text-sm font-semibold">Password</label>
+<a class="text-primary text-xs font-bold hover:underline" href="#">Forgot Password?</a>
+</div>
+<div class="relative flex items-stretch">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl z-10">lock</span>
+<input class="form-input w-full pl-12 pr-12 py-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:border-primary focus:ring-1 focus:ring-primary placeholder:text-slate-400" placeholder="••••••••" required="" type="password"/>
+<button class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200" type="button">
+<span class="material-symbols-outlined text-xl">visibility</span>
+</button>
+</div>
+</div>
+<!-- Remember Me Toggle -->
+<div class="flex items-center gap-2">
+<input class="rounded border-slate-300 text-primary focus:ring-primary" id="remember" type="checkbox"/>
+<label class="text-sm text-slate-600 dark:text-slate-400 cursor-pointer" for="remember">Remember this device</label>
+</div>
+<!-- Submit Button -->
+<button class="w-full h-14 bg-primary text-white font-bold rounded-lg hover:bg-opacity-90 shadow-lg shadow-primary/20 flex items-center justify-center gap-2" type="submit">
+                    Sign In
+                    <span class="material-symbols-outlined text-xl">arrow_forward</span>
+</button>
+</form>
+<!-- Social Login Divider -->
+<div class="relative my-8 text-center">
+<div class="absolute inset-0 flex items-center">
+<span class="w-full border-t border-slate-200 dark:border-slate-800"></span>
+</div>
+<span class="relative bg-white dark:bg-slate-900 px-4 text-xs text-slate-400 uppercase tracking-widest">Or continue with</span>
+</div>
+<!-- SSO Options -->
+<div class="grid grid-cols-2 gap-4">
+<button class="flex items-center justify-center gap-2 py-3 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+<img alt="Google Logo" class="w-5 h-5" data-alt="Google logo icon for single sign on login" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCRnLkcXi9QWflf9MA8ObMlIhXTDytrkTYSSW9sb8fMnLf9Q3BI7bffNpTotBBxPi5MId51To2xYE9LjCU3nb2XnoaO-6WRH1JIM502XsrpW5oed48Q5NSkevUlt0KwXI51ceH3MUd3OpCscnisAJor3UujxFmlSUt6E-b6_DTnN9yx_jI04hyrRyrwYYNAn14LmtQb1VSpytpVIsYKhRFcOnla_K3R7BtnqykMAg3FZgVgx6u7qgxJbl2gYRotFMOJrbceAEg3Qjs3"/>
+<span class="text-sm font-semibold">Google</span>
+</button>
+<button class="flex items-center justify-center gap-2 py-3 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-xl">fingerprint</span>
+<span class="text-sm font-semibold">Biometrics</span>
+</button>
+</div>
+</div>
+</main>
+<!-- Footer Links -->
+<footer class="py-6 px-10 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+<div class="max-w-[1200px] mx-auto flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
+<p>© 2024 MicroLoan Manager Inc. All rights reserved.</p>
+<div class="flex gap-6">
+<a class="hover:text-primary" href="#">Privacy Policy</a>
+<a class="hover:text-primary" href="#">Terms of Service</a>
+<a class="hover:text-primary" href="#">Contact Support</a>
+</div>
+</div>
+</footer>
+</body></html>

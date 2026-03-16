@@ -1,0 +1,11 @@
+# This file controls what gets sent to Cloud Build when deploying.
+# Unlike .gitignore, we WANT .env to be included in the build context.
+
+node_modules/
+dist/
+.git/
+.github/
+docs/
+scripts/
+*.local
+firebase-debug.log

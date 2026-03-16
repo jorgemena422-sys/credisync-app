@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Register Payment - MicroLoan Manager</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              colors: {
+                "primary": "#1142d4",
+                "background-light": "#f6f6f8",
+                "background-dark": "#101522",
+              },
+              fontFamily: {
+                "display": ["Inter"]
+              },
+              borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+            },
+          },
+        }
+    </script>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100">
+<div class="flex min-h-screen">
+<!-- SideNavBar -->
+<aside class="w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col fixed h-full">
+<div class="p-6 flex items-center gap-3">
+<div class="bg-primary rounded-lg p-2 text-white">
+<span class="material-symbols-outlined">account_balance</span>
+</div>
+<div>
+<h1 class="text-slate-900 dark:text-slate-100 text-base font-bold leading-tight">MicroLoan</h1>
+<p class="text-slate-500 dark:text-slate-400 text-xs font-medium">Admin Portal</p>
+</div>
+</div>
+<nav class="flex-1 px-4 space-y-1 mt-4">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px]">dashboard</span>
+<span class="text-sm font-medium">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px]">payments</span>
+<span class="text-sm font-medium">Loans</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 bg-primary/10 text-primary rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px] fill-1">receipt_long</span>
+<span class="text-sm font-semibold">Payments</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px]">group</span>
+<span class="text-sm font-medium">Customers</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px]">analytics</span>
+<span class="text-sm font-medium">Reports</span>
+</a>
+</nav>
+<div class="p-4 mt-auto border-t border-slate-100 dark:border-slate-800">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px]">settings</span>
+<span class="text-sm font-medium">Settings</span>
+</a>
+<div class="mt-4 flex items-center gap-3 px-3 py-2">
+<div class="size-8 rounded-full bg-slate-200 dark:bg-slate-700 bg-cover bg-center" data-alt="User profile avatar" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCGq3Ayy7yI04kKlpAXpFRie5jmEW-hhu0V8xkX5MO_qh8Zn6vjJag8hlnmgi7F4XD8qM45UixxCixKsknb2859ZJuYQIK3iGuEPErR7lpkVVXsCfDuDPQmK8myic2SrCUCCVZKl5kKSDbhOFKsZK9bCL2uKS4_KND4k0eHKYHtgU4K93q6-qtq4aeTaZLS5_ykKo_H9G0lcQrjjTUP7HT1_uRFrzv8nvf8vC1esp4yyBsRugXNF2tTDABUWqktqO75vRBamiy-ENr-')"></div>
+<div class="flex-1 overflow-hidden">
+<p class="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">Alex Rivera</p>
+<p class="text-[10px] text-slate-500 dark:text-slate-400 truncate">Senior Manager</p>
+</div>
+<span class="material-symbols-outlined text-slate-400 text-sm">logout</span>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="ml-64 flex-1 p-8 lg:p-12">
+<div class="max-w-3xl mx-auto">
+<!-- Header Section -->
+<div class="mb-8">
+<nav class="flex mb-4 text-sm text-slate-500 dark:text-slate-400 gap-2 items-center">
+<span>Payments</span>
+<span class="material-symbols-outlined text-sm">chevron_right</span>
+<span class="text-primary font-medium">Register New</span>
+</nav>
+<h2 class="text-3xl font-bold text-slate-900 dark:text-slate-100">Register New Payment</h2>
+<p class="text-slate-500 dark:text-slate-400 mt-1">Fill in the details below to record a loan repayment.</p>
+</div>
+<!-- Form Card -->
+<div class="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
+<div class="p-1 bg-primary/5 dark:bg-primary/10 flex items-center gap-3 px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+<span class="material-symbols-outlined text-primary">add_card</span>
+<h3 class="font-semibold text-slate-800 dark:text-slate-200">Payment Information</h3>
+</div>
+<form class="p-8 space-y-6">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<!-- Customer Selection -->
+<div class="flex flex-col gap-2 md:col-span-2">
+<label class="text-sm font-semibold text-slate-700 dark:text-slate-300">Customer Selection</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+<select class="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-lg focus:ring-primary focus:border-primary text-slate-900 dark:text-slate-100">
+<option disabled="" selected="" value="">Search for a customer...</option>
+<option>Robert Chen - CID-8829</option>
+<option>Sarah Williams - CID-1044</option>
+<option>Michael Scott - CID-4412</option>
+</select>
+</div>
+</div>
+<!-- Loan Selection -->
+<div class="flex flex-col gap-2 md:col-span-2">
+<label class="text-sm font-semibold text-slate-700 dark:text-slate-300">Select Active Loan</label>
+<select class="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-lg focus:ring-primary focus:border-primary text-slate-900 dark:text-slate-100">
+<option disabled="" selected="" value="">Select an outstanding loan</option>
+<option>Business Growth Loan - #LN-552 ($4,500 outstanding)</option>
+<option>Emergency Medical Loan - #LN-112 ($800 outstanding)</option>
+</select>
+</div>
+<!-- Payment Date -->
+<div class="flex flex-col gap-2">
+<label class="text-sm font-semibold text-slate-700 dark:text-slate-300">Payment Date</label>
+<input class="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-lg focus:ring-primary focus:border-primary text-slate-900 dark:text-slate-100" type="date" value="2023-11-20"/>
+</div>
+<!-- Amount Paid -->
+<div class="flex flex-col gap-2">
+<label class="text-sm font-semibold text-slate-700 dark:text-slate-300">Amount Paid ($)</label>
+<div class="relative">
+<span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">$</span>
+<input class="w-full pl-8 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-lg focus:ring-primary focus:border-primary text-slate-900 dark:text-slate-100" placeholder="0.00" type="number"/>
+</div>
+</div>
+<!-- Payment Method -->
+<div class="flex flex-col gap-2 md:col-span-2">
+<label class="text-sm font-semibold text-slate-700 dark:text-slate-300">Payment Method</label>
+<div class="grid grid-cols-3 gap-3">
+<label class="relative cursor-pointer group">
+<input checked="" class="peer sr-only" name="method" type="radio"/>
+<div class="flex items-center justify-center gap-2 p-3 border-2 border-slate-100 dark:border-slate-800 rounded-lg peer-checked:border-primary peer-checked:bg-primary/5 transition-all text-slate-600 dark:text-slate-400 peer-checked:text-primary">
+<span class="material-symbols-outlined">payments</span>
+<span class="text-sm font-medium">Cash</span>
+</div>
+</label>
+<label class="relative cursor-pointer group">
+<input class="peer sr-only" name="method" type="radio"/>
+<div class="flex items-center justify-center gap-2 p-3 border-2 border-slate-100 dark:border-slate-800 rounded-lg peer-checked:border-primary peer-checked:bg-primary/5 transition-all text-slate-600 dark:text-slate-400 peer-checked:text-primary">
+<span class="material-symbols-outlined">account_balance</span>
+<span class="text-sm font-medium">Bank</span>
+</div>
+</label>
+<label class="relative cursor-pointer group">
+<input class="peer sr-only" name="method" type="radio"/>
+<div class="flex items-center justify-center gap-2 p-3 border-2 border-slate-100 dark:border-slate-800 rounded-lg peer-checked:border-primary peer-checked:bg-primary/5 transition-all text-slate-600 dark:text-slate-400 peer-checked:text-primary">
+<span class="material-symbols-outlined">credit_card</span>
+<span class="text-sm font-medium">Card</span>
+</div>
+</label>
+</div>
+</div>
+<!-- Optional Notes -->
+<div class="flex flex-col gap-2 md:col-span-2">
+<label class="text-sm font-semibold text-slate-700 dark:text-slate-300">Optional Notes</label>
+<textarea class="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-lg focus:ring-primary focus:border-primary text-slate-900 dark:text-slate-100 resize-none" placeholder="Enter any additional information..." rows="3"></textarea>
+</div>
+</div>
+<!-- Actions -->
+<div class="pt-6 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3">
+<button class="px-6 py-3 text-sm font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors" type="button">
+                            Cancel
+                        </button>
+<button class="px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg transition-all shadow-md shadow-emerald-500/20 flex items-center gap-2" type="submit">
+<span class="material-symbols-outlined text-base">check_circle</span>
+                            Register Payment
+                        </button>
+</div>
+</form>
+</div>
+<!-- Recent Activity Mini List -->
+<div class="mt-12">
+<h4 class="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4">Recent Payments Registered</h4>
+<div class="space-y-3">
+<div class="bg-white dark:bg-slate-900 p-4 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<div class="size-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-emerald-600">
+<span class="material-symbols-outlined">history_edu</span>
+</div>
+<div>
+<p class="text-sm font-bold text-slate-900 dark:text-slate-100">Sarah Williams</p>
+<p class="text-xs text-slate-500">2 hours ago • Cash</p>
+</div>
+</div>
+<div class="text-right">
+<p class="text-sm font-bold text-slate-900 dark:text-slate-100">$240.00</p>
+<p class="text-[10px] text-emerald-500 font-bold uppercase tracking-tight">Confirmed</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

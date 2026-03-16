@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Microloan Management - Settings</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#1142d4",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101522",
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100">
+<div class="flex min-h-screen">
+<!-- Sidebar Navigation -->
+<aside class="w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col fixed h-full">
+<div class="p-6 flex items-center gap-3">
+<div class="bg-primary rounded-lg p-2 text-white">
+<span class="material-symbols-outlined">account_balance</span>
+</div>
+<div>
+<h1 class="text-sm font-bold leading-none">Admin Panel</h1>
+<p class="text-xs text-slate-500 mt-1">Microloan Management</p>
+</div>
+</div>
+<nav class="flex-1 px-4 py-4 flex flex-col gap-1">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">dashboard</span>
+<span class="text-sm font-medium">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">group</span>
+<span class="text-sm font-medium">Borrowers</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">payments</span>
+<span class="text-sm font-medium">Active Loans</span>
+</a>
+<div class="mt-4 mb-2 px-3">
+<p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Settings</p>
+</div>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">person</span>
+<span class="text-sm font-medium">Profile</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">business</span>
+<span class="text-sm font-medium">Company Info</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 bg-primary/10 text-primary rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">settings_input_component</span>
+<span class="text-sm font-medium">Loan Settings</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+<span class="text-sm font-medium">Notifications</span>
+</a>
+</nav>
+<div class="p-4 border-t border-slate-200 dark:border-slate-800">
+<button class="flex items-center gap-3 px-3 py-2 w-full text-slate-600 dark:text-slate-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 rounded-lg transition-colors">
+<span class="material-symbols-outlined text-[20px]">logout</span>
+<span class="text-sm font-medium">Logout</span>
+</button>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="ml-64 flex-1">
+<!-- Header -->
+<header class="h-16 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-8 sticky top-0 z-10">
+<div class="flex items-center gap-2">
+<span class="text-slate-400 text-sm">Settings</span>
+<span class="material-symbols-outlined text-slate-300 text-sm">chevron_right</span>
+<span class="text-sm font-semibold">Loan Configuration</span>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">search</span>
+<input class="pl-10 pr-4 py-1.5 bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-sm focus:ring-2 focus:ring-primary w-64" placeholder="Search settings..." type="text"/>
+</div>
+<button class="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
+<span class="material-symbols-outlined text-sm">help</span>
+</button>
+</div>
+</header>
+<div class="p-8 max-w-5xl mx-auto">
+<!-- Page Title -->
+<div class="mb-8">
+<h2 class="text-3xl font-black tracking-tight">System Settings</h2>
+<p class="text-slate-500 mt-1">Manage your lending parameters and global system behaviors.</p>
+</div>
+<!-- Tabs -->
+<div class="border-b border-slate-200 dark:border-slate-800 mb-8 overflow-x-auto">
+<div class="flex gap-8">
+<button class="pb-4 text-sm font-medium text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 border-b-2 border-transparent">
+                            Profile
+                        </button>
+<button class="pb-4 text-sm font-medium text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 border-b-2 border-transparent">
+                            Company Info
+                        </button>
+<button class="pb-4 text-sm font-medium text-primary border-b-2 border-primary">
+                            Loan Settings
+                        </button>
+<button class="pb-4 text-sm font-medium text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 border-b-2 border-transparent">
+                            System Notifications
+                        </button>
+</div>
+</div>
+<!-- Settings Sections -->
+<div class="space-y-8">
+<!-- Default Interest Rates Section -->
+<section class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+<div class="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+<div>
+<h3 class="font-bold text-lg">Default Interest Rates</h3>
+<p class="text-sm text-slate-500">Configure global interest rates for new loan applications.</p>
+</div>
+<span class="material-symbols-outlined text-slate-400">percent</span>
+</div>
+<div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="space-y-2">
+<label class="text-sm font-medium">Standard Daily Rate (%)</label>
+<div class="relative">
+<input class="w-full rounded-lg border-slate-200 dark:border-slate-800 dark:bg-slate-950 focus:ring-primary focus:border-primary" step="0.01" type="number" value="0.15"/>
+<span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">%</span>
+</div>
+</div>
+<div class="space-y-2">
+<label class="text-sm font-medium">Premium Annual Rate (%)</label>
+<div class="relative">
+<input class="w-full rounded-lg border-slate-200 dark:border-slate-800 dark:bg-slate-950 focus:ring-primary focus:border-primary" step="0.01" type="number" value="24.50"/>
+<span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">%</span>
+</div>
+</div>
+<div class="space-y-2">
+<label class="text-sm font-medium">Late Payment Penalty (%)</label>
+<div class="relative">
+<input class="w-full rounded-lg border-slate-200 dark:border-slate-800 dark:bg-slate-950 focus:ring-primary focus:border-primary" step="0.01" type="number" value="5.00"/>
+<span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">%</span>
+</div>
+<p class="text-[11px] text-slate-500">Calculated on the overdue balance per week.</p>
+</div>
+</div>
+</section>
+<!-- Grace Periods Section -->
+<section class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+<div class="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+<div>
+<h3 class="font-bold text-lg">Grace Periods</h3>
+<p class="text-sm text-slate-500">Define the buffer time before penalties are applied.</p>
+</div>
+<span class="material-symbols-outlined text-slate-400">timer</span>
+</div>
+<div class="p-6 space-y-6">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="space-y-2">
+<label class="text-sm font-medium">Standard Grace Period (Days)</label>
+<input class="w-full rounded-lg border-slate-200 dark:border-slate-800 dark:bg-slate-950 focus:ring-primary focus:border-primary" type="number" value="3"/>
+</div>
+<div class="space-y-2">
+<label class="text-sm font-medium">First Payment Grace (Days)</label>
+<input class="w-full rounded-lg border-slate-200 dark:border-slate-800 dark:bg-slate-950 focus:ring-primary focus:border-primary" type="number" value="7"/>
+</div>
+</div>
+<div class="flex items-start gap-3 p-4 bg-primary/5 rounded-lg border border-primary/10">
+<span class="material-symbols-outlined text-primary">info</span>
+<p class="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                                    Grace periods apply to all loan products unless specifically overridden at the individual loan product level. Notifications will still be sent during the grace period.
+                                </p>
+</div>
+</div>
+</section>
+<!-- Risk Profile Configuration -->
+<section class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+<div class="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+<div>
+<h3 class="font-bold text-lg">Risk Assessment Defaults</h3>
+<p class="text-sm text-slate-500">Set thresholds for automatic loan approval or rejection.</p>
+</div>
+<span class="material-symbols-outlined text-slate-400">shield</span>
+</div>
+<div class="p-6 space-y-4">
+<div class="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+<div>
+<p class="text-sm font-semibold">Automatic Credit Score Approval</p>
+<p class="text-xs text-slate-500">Loans with scores above this will be pre-approved.</p>
+</div>
+<div class="flex items-center gap-4">
+<input class="w-20 text-center rounded-lg border-slate-200 dark:border-slate-800 dark:bg-slate-950" type="number" value="720"/>
+<div class="w-12 h-6 bg-primary rounded-full relative cursor-pointer">
+<div class="absolute right-1 top-1 w-4 h-4 bg-white rounded-full"></div>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+<div>
+<p class="text-sm font-semibold">Debt-to-Income Threshold</p>
+<p class="text-xs text-slate-500">Maximum ratio for high-risk applications.</p>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative">
+<input class="w-20 text-center rounded-lg border-slate-200 dark:border-slate-800 dark:bg-slate-950" type="number" value="40"/>
+<span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">%</span>
+</div>
+<div class="w-12 h-6 bg-slate-300 dark:bg-slate-700 rounded-full relative cursor-pointer">
+<div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Save Actions -->
+<div class="flex justify-end gap-3 pt-4">
+<button class="px-6 py-2.5 rounded-lg text-sm font-bold border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                            Discard Changes
+                        </button>
+<button class="px-6 py-2.5 rounded-lg text-sm font-bold bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/20 transition-all active:scale-[0.98]">
+                            Save Settings
+                        </button>
+</div>
+</div>
+<!-- Footer Info -->
+<div class="mt-12 pt-8 border-t border-slate-200 dark:border-slate-800 text-center">
+<p class="text-xs text-slate-400">Last updated by Admin (ID: 4429) on Oct 24, 2023 at 14:32 UTC</p>
+<div class="mt-4 flex justify-center gap-6">
+<a class="text-xs text-slate-500 hover:text-primary underline" href="#">Audit Logs</a>
+<a class="text-xs text-slate-500 hover:text-primary underline" href="#">Privacy Policy</a>
+<a class="text-xs text-slate-500 hover:text-primary underline" href="#">Terms of Service</a>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

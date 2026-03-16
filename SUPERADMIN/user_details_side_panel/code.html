@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#1142d4",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101522",
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .material-symbols-outlined { font-size: 20px; }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100">
+<div class="relative flex min-h-screen w-full flex-col overflow-x-hidden">
+<!-- Main Dashboard Header (TopNavBar Component Style) -->
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-6 py-3 sticky top-0 z-10">
+<div class="flex items-center gap-8">
+<div class="flex items-center gap-4 text-primary">
+<div class="size-6">
+<svg fill="currentColor" viewbox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+<path d="M44 11.2727C44 14.0109 39.8386 16.3957 33.69 17.6364C39.8386 18.877 44 21.2618 44 24C44 26.7382 39.8386 29.123 33.69 30.3636C39.8386 31.6043 44 33.9891 44 36.7273C44 40.7439 35.0457 44 24 44C12.9543 44 4 40.7439 4 36.7273C4 33.9891 8.16144 31.6043 14.31 30.3636C8.16144 29.123 4 26.7382 4 24C4 21.2618 8.16144 18.877 14.31 17.6364C8.16144 16.3957 4 14.0109 4 11.2727C4 7.25611 12.9543 4 24 4C35.0457 4 44 7.25611 44 11.2727Z"></path>
+</svg>
+</div>
+<h2 class="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em]">CREDISYNC Admin</h2>
+</div>
+</div>
+<div class="flex flex-1 justify-end gap-4 items-center">
+<div class="flex gap-2">
+<button class="flex items-center justify-center rounded-lg h-10 w-10 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="flex items-center justify-center rounded-lg h-10 w-10 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+<div class="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
+<span class="text-primary font-bold text-xs">AD</span>
+</div>
+</div>
+</header>
+<!-- Main Content Area (Background for the drawer) -->
+<main class="flex-1 p-6 lg:p-10 relative">
+<div class="flex justify-between items-center mb-6">
+<h1 class="text-2xl font-bold">Business Management</h1>
+<button class="bg-primary text-white px-4 py-2 rounded-lg font-semibold flex items-center gap-2">
+<span class="material-symbols-outlined">add</span>
+                    Add Business
+                </button>
+</div>
+<!-- Mock Table Background -->
+<div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden opacity-50">
+<table class="w-full text-left">
+<thead class="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
+<tr>
+<th class="px-6 py-4 text-sm font-semibold">Business Name</th>
+<th class="px-6 py-4 text-sm font-semibold">Owner</th>
+<th class="px-6 py-4 text-sm font-semibold">Status</th>
+<th class="px-6 py-4 text-sm font-semibold">Portfolio</th>
+<th class="px-6 py-4 text-sm font-semibold text-right">Actions</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+<tr class="bg-primary/5">
+<td class="px-6 py-4 font-medium">Lendly Solutions</td>
+<td class="px-6 py-4">Jane Cooper</td>
+<td class="px-6 py-4"><span class="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-bold">ACTIVE</span></td>
+<td class="px-6 py-4">$1.2M</td>
+<td class="px-6 py-4 text-right"><span class="material-symbols-outlined text-slate-400">more_vert</span></td>
+</tr>
+<tr>
+<td class="px-6 py-4 font-medium">FastTrack Credits</td>
+<td class="px-6 py-4">Robert Fox</td>
+<td class="px-6 py-4"><span class="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-bold">ACTIVE</span></td>
+<td class="px-6 py-4">$450k</td>
+<td class="px-6 py-4 text-right"><span class="material-symbols-outlined text-slate-400">more_vert</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- OVERLAY (Dim Background) -->
+<div class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-20"></div>
+<!-- SIDE PANEL / DRAWER -->
+<aside class="fixed right-0 top-0 bottom-0 w-full max-w-[480px] bg-white dark:bg-slate-900 shadow-2xl z-30 flex flex-col border-l border-slate-200 dark:border-slate-800 overflow-y-auto">
+<!-- Drawer Header -->
+<div class="p-6 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10">
+<div class="flex justify-between items-start mb-4">
+<div class="flex gap-4 items-center">
+<div class="h-16 w-16 rounded-xl bg-primary/10 flex items-center justify-center text-primary" data-alt="Blue abstract square with primary color gradient">
+<span class="material-symbols-outlined !text-3xl">account_balance</span>
+</div>
+<div>
+<h2 class="text-xl font-bold">Lendly Solutions</h2>
+<div class="flex items-center gap-2 mt-1">
+<span class="inline-block h-2 w-2 rounded-full bg-emerald-500"></span>
+<span class="text-sm font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Active</span>
+<span class="text-slate-300 dark:text-slate-700 mx-1">•</span>
+<span class="text-xs text-slate-500 uppercase">ID: BIZ-99283</span>
+</div>
+</div>
+</div>
+<button class="h-8 w-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+</div>
+<!-- Drawer Content -->
+<div class="flex-1 p-6 space-y-8">
+<!-- Portfolio Stats -->
+<section>
+<h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Portfolio Overview</h3>
+<div class="grid grid-cols-1 gap-3">
+<div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800 flex justify-between items-center">
+<div>
+<p class="text-sm text-slate-500 dark:text-slate-400">Active Loans</p>
+<p class="text-2xl font-bold mt-1">342</p>
+</div>
+<div class="bg-primary/10 p-2 rounded-lg text-primary">
+<span class="material-symbols-outlined">description</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-3">
+<div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800">
+<p class="text-sm text-slate-500 dark:text-slate-400">Managed Capital</p>
+<p class="text-xl font-bold mt-1">$1.2M</p>
+</div>
+<div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800">
+<p class="text-sm text-slate-500 dark:text-slate-400">Monthly Rev</p>
+<p class="text-xl font-bold mt-1">$12.5k</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Business Information -->
+<section>
+<h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Business Details</h3>
+<div class="space-y-4">
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-slate-400">person</span>
+<div>
+<p class="text-xs text-slate-400">Owner</p>
+<p class="text-sm font-medium">Jane Cooper</p>
+</div>
+</div>
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-slate-400">mail</span>
+<div>
+<p class="text-xs text-slate-400">Email</p>
+<p class="text-sm font-medium">jane@lendly.solutions</p>
+</div>
+</div>
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-slate-400">phone</span>
+<div>
+<p class="text-xs text-slate-400">Phone</p>
+<p class="text-sm font-medium">+1 (555) 000-0000</p>
+</div>
+</div>
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-slate-400">location_on</span>
+<div>
+<p class="text-xs text-slate-400">Address</p>
+<p class="text-sm font-medium leading-relaxed">2972 Westheimer Rd. Santa Ana, Illinois 85486</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Subscription -->
+<section class="bg-primary/5 rounded-xl p-5 border border-primary/10">
+<div class="flex justify-between items-center mb-4">
+<h3 class="text-xs font-bold text-primary uppercase tracking-widest">Subscription</h3>
+<span class="text-[10px] bg-primary text-white px-2 py-0.5 rounded uppercase font-bold">Enterprise</span>
+</div>
+<div class="flex justify-between items-end">
+<div>
+<p class="text-xs text-slate-500 dark:text-slate-400">Next Renewal</p>
+<p class="text-sm font-bold text-slate-800 dark:text-slate-100">Oct 15, 2024</p>
+</div>
+<button class="text-primary text-sm font-semibold flex items-center gap-1 hover:underline">
+                                Upgrade Plan <span class="material-symbols-outlined !text-sm">arrow_forward</span>
+</button>
+</div>
+</section>
+<!-- Payment History -->
+<section>
+<h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Recent Payments</h3>
+<div class="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-lg overflow-hidden">
+<table class="w-full text-sm">
+<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+<tr>
+<td class="px-4 py-3 text-slate-500">Sep 15, 2023</td>
+<td class="px-4 py-3 font-semibold">$1,250.00</td>
+<td class="px-4 py-3 text-right">
+<span class="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded">Paid</span>
+</td>
+</tr>
+<tr>
+<td class="px-4 py-3 text-slate-500">Aug 15, 2023</td>
+<td class="px-4 py-3 font-semibold">$1,250.00</td>
+<td class="px-4 py-3 text-right">
+<span class="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded">Paid</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</div>
+<!-- Footer Actions -->
+<div class="p-6 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-800 sticky bottom-0 z-10 space-y-3">
+<div class="grid grid-cols-2 gap-3">
+<button class="flex items-center justify-center gap-2 h-11 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-semibold hover:bg-slate-50">
+<span class="material-symbols-outlined !text-lg">edit</span>
+                            Edit Details
+                        </button>
+<button class="flex items-center justify-center gap-2 h-11 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-semibold hover:bg-slate-50">
+<span class="material-symbols-outlined !text-lg">credit_card</span>
+                            Manage Billing
+                        </button>
+</div>
+<button class="w-full flex items-center justify-center gap-2 h-11 bg-amber-50 dark:bg-amber-900/20 text-amber-600 border border-amber-200 dark:border-amber-800/50 rounded-lg text-sm font-semibold hover:bg-amber-100">
+<span class="material-symbols-outlined !text-lg text-amber-600">pause_circle</span>
+                        Suspend Account
+                    </button>
+<button class="w-full flex items-center justify-center gap-2 h-11 bg-rose-50 dark:bg-rose-900/20 text-rose-600 border border-rose-200 dark:border-rose-800/50 rounded-lg text-sm font-semibold hover:bg-rose-100">
+<span class="material-symbols-outlined !text-lg text-rose-600">delete</span>
+                        Delete Account
+                    </button>
+</div>
+</aside>
+</main>
+</div>
+</body></html>
