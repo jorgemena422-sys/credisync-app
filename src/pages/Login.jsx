@@ -4,6 +4,7 @@ import { useToast } from '../context/ToastContext';
 import { useNavigate } from 'react-router-dom';
 import { apiRequest } from '../utils/api';
 
+// Staging update: Sign Up button text
 export default function Login() {
     const { login, registerAdmin } = useAuth();
     const { showToast } = useToast();
@@ -49,14 +50,8 @@ export default function Login() {
             return;
         }
 
-        const confirmed = window.confirm('Esto creara un nuevo tenant/workspace para este correo. Deseas continuar?');
-        if (!confirmed) {
-            return;
-        }
-
         try {
             await registerAdmin(email, password);
-            showToast('Usuario administrador creado');
             navigate('/dashboard');
         } catch (error) {
             showToast(error.message || 'No se pudo crear el usuario');
@@ -138,7 +133,7 @@ export default function Login() {
                                 className="btn btn-ghost auth-submit auth-signup-btn"
                                 onClick={handleRegister}
                             >
-                                Crear workspace
+                                Sign Up
                             </button>
                         )}
                     </div>
@@ -146,13 +141,6 @@ export default function Login() {
                     {!allowRegistration && (
                         <p className="muted small">El registro de nuevos workspaces esta deshabilitado. Solicitalo al superadministrador.</p>
                     )}
-
-                    <div className="auth-divider"><span>OR CONTINUE WITH</span></div>
-
-                    <div className="auth-actions-grid">
-                        <button type="button" className="btn btn-ghost auth-mini-btn"><span className="material-symbols-outlined">brand_family</span>Google</button>
-                        <button type="button" className="btn btn-ghost auth-mini-btn"><span className="material-symbols-outlined">fingerprint</span>Biometrics</button>
-                    </div>
 
                 </form>
             </div>

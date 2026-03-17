@@ -1,41 +1,84 @@
 {
-  "hosting": {
-    "public": "dist-deploy",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "headers": [
-      {
-        "source": "**/*.@(js|css|map|ico|png|jpg|jpeg|svg|webp|woff|woff2)",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "public,max-age=31536000,immutable"
+  "hosting": [
+    {
+      "target": "prod",
+      "public": "dist-deploy",
+      "ignore": [
+        "firebase.deploy.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "headers": [
+        {
+          "source": "**/*.@(js|css|map|ico|png|jpg|jpeg|svg|webp|woff|woff2)",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "public,max-age=31536000,immutable"
+            }
+          ]
+        }
+      ],
+      "rewrites": [
+        {
+          "source": "/api/**",
+          "run": {
+            "serviceId": "credisync-api",
+            "region": "us-central1"
           }
-        ]
-      }
-    ],
-    "rewrites": [
-      {
-        "source": "/api/**",
-        "run": {
-          "serviceId": "credisync-api",
-          "region": "us-central1"
+        },
+        {
+          "source": "/calendar/**",
+          "run": {
+            "serviceId": "credisync-api",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "**",
+          "destination": "/index.html"
         }
-      },
-      {
-        "source": "/calendar/**",
-        "run": {
-          "serviceId": "credisync-api",
-          "region": "us-central1"
+      ]
+    },
+    {
+      "target": "staging",
+      "public": "dist-deploy",
+      "ignore": [
+        "firebase.deploy.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "headers": [
+        {
+          "source": "**/*.@(js|css|map|ico|png|jpg|jpeg|svg|webp|woff|woff2)",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "public,max-age=31536000,immutable"
+            }
+          ]
         }
-      },
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
-  }
+      ],
+      "rewrites": [
+        {
+          "source": "/api/**",
+          "run": {
+            "serviceId": "credisync-api-staging",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/calendar/**",
+          "run": {
+            "serviceId": "credisync-api-staging",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  ]
 }

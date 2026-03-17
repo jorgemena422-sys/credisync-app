@@ -104,10 +104,117 @@ CORS_ORIGIN=https://tu-dominio-final.com
 
 ```bash
 npm run build
-firebase deploy --only hosting
+npm run deploy:hosting:prod
 ```
 
 Nota: el backend debe estar desplegado en el servicio indicado por `hosting.rewrites.run.serviceId`.
+
+## Staging seguro (mismo proyecto Firebase)
+
+Objetivo: tener una version de pruebas sin afectar la version estable usando el mismo proyecto Firebase, pero con frontend, backend, scheduler y base de datos aislados.
+
+Arquitectura recomendada:
+- Hosting `prod` -> Cloud Run `credisync-api` -> Supabase produccion
+- Hosting `staging` -> Cloud Run `credisync-api-staging` -> Supabase staging
+- Cloud Scheduler prod y staging separados
+
+Archivos de apoyo incluidos:
+- `firebase.json` ahora define targets `prod` y `staging`
+- `.env.staging.example` con variables base de staging
+- `scripts/setup-firebase-staging.mjs` para crear/aplicar el site staging en Firebase
+
+### 1. Preparar Hosting staging en el mismo proyecto Firebase
+
+Define el proyecto y, si quieres, los site ids:
+
+```bash
+GOOGLE_CLOUD_PROJECT=tu-proyecto-gcp
+FIREBASE_HOSTING_PROD_SITE=tu-proyecto-gcp
+FIREBASE_HOSTING_STAGING_SITE=tu-proyecto-gcp-staging
+```
+
+Luego ejecuta:
+
+```bash
+npm run setup:firebase:staging
+```
+
+Esto hace dos cosas:
+- crea el site de staging si no existe
+- configura los targets locales `prod` y `staging` en `.firebaserc`
+
+### 2. Preparar variables seguras de staging
+
+Usa `.env.staging.example` como plantilla y define al menos:
+
+```env
+SUPABASE_URL=https://tu-supabase-staging.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+SUPABASE_ANON_KEY=...
+JWT_SECRET=...
+APP_PUBLIC_URL=https://tu-proyecto-gcp-staging.web.app
+CORS_ORIGIN=https://tu-proyecto-gcp-staging.web.app
+PUSH_VAPID_PUBLIC_KEY=...
+PUSH_VAPID_PRIVATE_KEY=...
+PUSH_DAILY_SUMMARY_JOB_TOKEN=...
+ENABLE_LOCAL_PUSH_SCHEDULER=false
+```
+
+Importante:
+- staging debe usar un proyecto Supabase diferente al de produccion
+- staging debe usar token de scheduler y claves push propias
+
+### 3. Desplegar backend staging
+
+```bash
+npm run deploy:staging:backend
+```
+
+El servicio esperado es `credisync-api-staging`.
+
+### 4. Crear scheduler staging
+
+Define estas variables antes de ejecutar el script:
+
+```env
+GOOGLE_CLOUD_PROJECT=tu-proyecto-gcp
+CLOUD_RUN_SERVICE=credisync-api-staging
+CLOUD_RUN_REGION=us-central1
+PUSH_DAILY_SUMMARY_JOB_TOKEN=tu-token-staging
+PUSH_DAILY_SUMMARY_SCHEDULER_JOB_NAME=credisync-push-daily-summary-staging
+```
+
+Luego ejecuta:
+
+```bash
+npm run deploy:staging:scheduler
+```
+
+### 5. Desplegar frontend staging
+
+```bash
+npm run build
+npm run deploy:hosting:staging
+```
+
+### 6. Verificaciones basicas
+
+```bash
+firebase hosting:sites:list
+gcloud run services describe credisync-api-staging --region us-central1
+gcloud scheduler jobs describe credisync-push-daily-summary-staging --location us-central1
+```
+
+Si quieres probar el entorno de staging completo:
+- entra al site staging
+- confirma que `/api/**` resuelva al backend staging
+- verifica que los datos visibles pertenezcan a Supabase staging
+- registra solo dispositivos de prueba para push staging
+
+Notas operativas:
+- `deploy:all` ahora publica solo `prod`
+- `deploy:staging` despliega backend staging y hosting staging
+- puedes mantener `preview channels` para revisar UI puntual, pero el staging real debe seguir yendo contra `credisync-api-staging`
 
 ## Push diario (PWA iPhone)
 

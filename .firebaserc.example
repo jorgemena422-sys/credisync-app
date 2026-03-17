@@ -1,5 +1,17 @@
 {
   "projects": {
     "default": "tu-proyecto-firebase"
+  },
+  "targets": {
+    "tu-proyecto-firebase": {
+      "hosting": {
+        "prod": [
+          "tu-proyecto-firebase"
+        ],
+        "staging": [
+          "tu-proyecto-firebase-staging"
+        ]
+      }
+    }
   }
 }

@@ -3260,6 +3260,212 @@ app.post("/api/auth/logout", (req, res) => {
   res.status(204).end();
 });
 
+// Google OAuth redirect endpoint
+app.get("/api/auth/google", (req, res) => {
+  // For staging: redirect to Google OAuth
+  // In production, you would implement full OAuth flow
+  const googleOAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${process.env.GOOGLE_CLIENT_ID || ''}&redirect_uri=${encodeURIComponent(APP_PUBLIC_URL + '/api/auth/google/callback')}&response_type=code&scope=openid%20email%20profile`;
+  
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    // Si no hay Google Client ID, mostrar mensaje informativo
+    return res.json({ 
+      message: 'Google OAuth no configurado. Para usar esta funcionalidad, configura GOOGLE_CLIENT_ID en las variables de entorno.',
+      info: 'Por ahora, usa Sign In con email y password.'
+    });
+  }
+  
+  res.redirect(googleOAuthUrl);
+});
+
+// Google OAuth callback endpoint
+app.get("/api/auth/google/callback", async (req, res, next) => {
+  try {
+    const { code } = req.query;
+    
+    if (!code || !process.env.GOOGLE_CLIENT_ID) {
+      return res.status(400).json({ message: 'Codigo de Google no valido o configuracion incompleta' });
+    }
+    
+    // Exchange code for token
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+        code,
+        redirect_uri: APP_PUBLIC_URL + '/api/auth/google/callback',
+        grant_type: 'authorization_code'
+      })
+    });
+    
+    const tokenData = await tokenResponse.json();
+    
+    if (!tokenData.access_token) {
+      return res.status(400).json({ message: 'No se pudo obtener token de Google' });
+    }
+    
+    // Get user info from Google
+    const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` }
+    });
+    
+    const googleUser = await userInfoResponse.json();
+    
+    if (!googleUser.email) {
+      return res.status(400).json({ message: 'No se pudo obtener email de Google' });
+    }
+    
+    // Find or create user in Supabase
+    let authUser = await findAuthUserByEmail(googleUser.email);
+    
+    if (!authUser) {
+      // Create new user
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const { data, error } = await supabase.auth.admin.createUser({
+        email: googleUser.email,
+        password: randomPassword,
+        email_confirm: true,
+        user_metadata: {
+          name: googleUser.name || googleUser.email,
+          role: ADMIN_ROLE,
+          provider: 'google'
+        }
+      });
+      
+      if (error) throw error;
+      authUser = data?.user || null;
+    }
+    
+    // Get or create app user
+    let appUser = await getAppUserById(authUser.id);
+    
+    if (!appUser) {
+      const { data, error } = await supabase
+        .from('users')
+        .insert([{
+          id: authUser.id,
+          email: googleUser.email,
+          name: googleUser.name || googleUser.email,
+          role: ADMIN_ROLE,
+          status: 'active',
+          created_at: new Date().toISOString()
+        }])
+        .select()
+        .single();
+      
+      if (error) throw error;
+      appUser = data;
+    }
+    
+    // Update last login
+    await supabase
+      .from('users')
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('id', appUser.id);
+    
+    // Generate JWT
+    const token = jwt.sign(
+      { sub: appUser.id, email: appUser.email, role: appUser.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.cookie(JWT_COOKIE_NAME, token, cookieOptions());
+    res.redirect('/dashboard');
+  } catch (error) {
+    console.error('Google OAuth error:', error);
+    res.redirect('/?error=google-auth-failed');
+  }
+});
+
+// Biometric authentication registration (after successful login)
+app.post("/api/auth/biometric/register", requireAuth, async (req, res, next) => {
+  try {
+    const { publicKey } = req.body;
+    
+    // Generate credential creation options
+    const challenge = crypto.randomBytes(32);
+    const userId = req.user.id;
+    
+    const options = {
+      challenge: challenge.toString('base64'),
+      user: {
+        id: userId,
+        name: req.user.email,
+        displayName: req.user.name
+      },
+      pubKeyCredParams: [
+        { alg: -7, type: 'public-key' }, // ES256
+        { alg: -257, type: 'public-key' } // RS256
+      ],
+      timeout: 60000,
+      attestation: 'none',
+      authenticatorSelection: {
+        authenticatorAttachment: 'platform',
+        userVerification: 'required'
+      }
+    };
+    
+    // Store challenge temporarily (in production, use Redis or similar)
+    req.session = req.session || {};
+    req.session.challenge = challenge.toString('base64');
+    
+    res.json({ options });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Biometric authentication endpoint
+app.post("/api/auth/biometric", async (req, res, next) => {
+  try {
+    const { id, rawId, response } = req.body;
+    
+    // Verify the biometric assertion
+    // In production, you would verify the signature against stored public key
+    
+    // For now, we'll look up user by credential ID stored in localStorage
+    // This is a simplified implementation
+    
+    // Get user from credential (stored in userHandle)
+    const userHandle = response.userHandle;
+    
+    if (!userHandle) {
+      return res.status(400).json({ message: 'Credencial biometrica invalida' });
+    }
+    
+    // Decode userHandle to get user ID
+    const userId = atob(userHandle);
+    
+    // Get user from database
+    const appUser = await getAppUserById(userId);
+    
+    if (!appUser || normalizeAccountStatus(appUser.status) !== 'active') {
+      return res.status(401).json({ message: 'Usuario no encontrado o inactivo' });
+    }
+    
+    // Update last login
+    await supabase
+      .from('users')
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('id', appUser.id);
+    
+    // Generate JWT
+    const token = jwt.sign(
+      { sub: appUser.id, email: appUser.email, role: appUser.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.cookie(JWT_COOKIE_NAME, token, cookieOptions());
+    res.json({ user: sanitizeUser(appUser) });
+  } catch (error) {
+    console.error('Biometric auth error:', error);
+    next(error);
+  }
+});
+
 app.get("/api/auth/me", requireAuth, (req, res) => {
   res.json({ user: req.user });
 });

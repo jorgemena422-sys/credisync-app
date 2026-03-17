@@ -1,6 +1,7 @@
 import "dotenv/config";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 
 function env(name, fallback = "") {
   return String(process.env[name] || fallback).trim();
@@ -8,6 +9,31 @@ function env(name, fallback = "") {
 
 function hasFlag(flag) {
   return process.argv.includes(flag);
+}
+
+function commandExists(command, args = ["--version"]) {
+  const result = spawnSync(command, args, { encoding: "utf8", stdio: "pipe" });
+  return !result.error;
+}
+
+function gcloudCommand() {
+  if (process.platform === "win32") {
+    if (commandExists("gcloud.cmd")) {
+      return "gcloud.cmd";
+    }
+    const candidates = [
+      `${process.env.LOCALAPPDATA || ""}\\Google\\Cloud SDK\\google-cloud-sdk\\bin\\gcloud.cmd`,
+      "C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin\\gcloud.cmd",
+      "C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin\\gcloud.cmd"
+    ].filter(Boolean);
+    const installedPath = candidates.find((filePath) => fs.existsSync(filePath));
+    if (installedPath) {
+      return installedPath;
+    }
+    return "gcloud";
+  }
+
+  return "gcloud";
 }
 
 function printHelp() {
@@ -52,7 +78,9 @@ if (!token) {
 }
 
 function runGcloud(args, options = {}) {
-  const printable = ["gcloud", ...args]
+  const commandName = gcloudCommand();
+  const commandToRun = process.platform === "win32" && /\s/.test(commandName) ? `"${commandName}"` : commandName;
+  const printable = [commandName, ...args]
     .map((value) => String(value).replace(/Authorization=Bearer\s+[^,\s]+/g, "Authorization=Bearer ***"))
     .join(" ");
   if (dryRun) {
@@ -60,10 +88,16 @@ function runGcloud(args, options = {}) {
     return { status: 0, stdout: "", stderr: "" };
   }
 
-  const result = spawnSync("gcloud", args, {
+  const result = spawnSync(commandToRun, args, {
     encoding: "utf8",
-    stdio: options.captureOutput ? "pipe" : "inherit"
+    stdio: options.captureOutput ? "pipe" : "inherit",
+    shell: process.platform === "win32"
   });
+
+  if (result.error) {
+    console.error("No se encontro gcloud CLI en el entorno. Verifica que Google Cloud CLI este instalado y disponible en PATH.");
+    process.exit(1);
+  }
 
   if (result.status !== 0 && !options.allowFailure) {
     const stderr = String(result.stderr || "").trim();
@@ -113,13 +147,12 @@ const commonArgs = [
   targetUrl,
   "--http-method",
   "POST",
-  "--headers",
-  `Authorization=Bearer ${token},Content-Type=application/json`,
   "--message-body",
   body,
   "--description",
   "Push diario de cobranza CrediSync a Cloud Run"
 ];
+const headerValue = `Authorization=Bearer ${token},Content-Type=application/json`;
 
 const describeResult = runGcloud(
   [
@@ -138,10 +171,10 @@ const describeResult = runGcloud(
 const exists = dryRun ? false : describeResult.status === 0;
 
 if (exists) {
-  runGcloud(["scheduler", "jobs", "update", "http", jobName, ...commonArgs]);
+  runGcloud(["scheduler", "jobs", "update", "http", jobName, ...commonArgs, "--update-headers", headerValue]);
   console.log(`Job actualizado: ${jobName}`);
 } else {
-  runGcloud(["scheduler", "jobs", "create", "http", jobName, ...commonArgs]);
+  runGcloud(["scheduler", "jobs", "create", "http", jobName, ...commonArgs, "--headers", headerValue]);
   console.log(`Job creado: ${jobName}`);
 }
 
