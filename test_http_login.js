@@ -1,9 +1,15 @@
 const http = require('http');
 
-const data = JSON.stringify({
-  email: 'jmproductionrd@gmail.com',
-  password: '09071124.'
-});
+const payload = {
+  email: String(process.env.TEST_USER_EMAIL || '').trim(),
+  password: String(process.env.TEST_USER_PASSWORD || '').trim()
+};
+
+if (!payload.email || !payload.password) {
+  throw new Error('Define TEST_USER_EMAIL y TEST_USER_PASSWORD antes de ejecutar este script.');
+}
+
+const data = JSON.stringify(payload);
 
 const options = {
   hostname: 'localhost',

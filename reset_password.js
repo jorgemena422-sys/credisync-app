@@ -9,8 +9,12 @@ const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 });
 
 async function resetPassword() {
-  const email = "jmproductionrd@gmail.com";
-  const password = "09071124.";
+  const email = String(process.env.TEST_USER_EMAIL || '').trim();
+  const password = String(process.env.TEST_USER_PASSWORD || '').trim();
+
+  if (!email || !password) {
+    throw new Error('Define TEST_USER_EMAIL y TEST_USER_PASSWORD antes de ejecutar este script.');
+  }
 
   console.log("Looking up user by email:", email);
   const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers();

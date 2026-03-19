@@ -59,7 +59,7 @@ export default function Login() {
     };
 
     const handleForgotPassword = () => {
-        showToast('Solicita recuperacion de acceso al superadministrador');
+        navigate('/reset-password');
     };
 
     return (

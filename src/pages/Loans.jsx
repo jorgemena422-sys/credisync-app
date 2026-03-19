@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { loanOutstanding, money, formatDate, loanTotalPayable, loanInstallment, loanNextDueDate, loanMaturityDate, initials } from '../utils/helpers';
+import { loanLateFeeOutstanding, loanOutstanding, loanOutstandingWithPenalty, money, formatDate, loanTotalPayable, loanInstallment, loanNextDueDate, loanMaturityDate, initials } from '../utils/helpers';
 import { statusTag } from './Dashboard';
 import { useDrawer } from '../context/DrawerContext';
 
@@ -67,7 +67,7 @@ export default function Loans() {
                                             <td data-label="Cliente">{customer ? customer.name : 'Sin cliente'}</td>
                                             <td data-label="Tipo">{loan.type}</td>
                                             <td data-label="Monto">{money(loan.principal)}</td>
-                                            <td data-label="Saldo">{money(loanOutstanding(loan))}</td>
+                                            <td data-label="Saldo">{money(loanOutstandingWithPenalty(loan, state))}</td>
                                             <td data-label="Estado">{statusTag(loan.status)}</td>
                                             <td data-label="Accion">
                                                 <button
@@ -110,6 +110,7 @@ export default function Loans() {
             {selectedLoan && (
                 <LoanDetailModal
                     loan={selectedLoan}
+                    state={state}
                     customer={state.customers.find(c => c.id === selectedLoan.customerId)}
                     payments={state.payments.filter(p => p.loanId === selectedLoan.id)}
                     readOnly={readOnly}
@@ -124,9 +125,11 @@ export default function Loans() {
     );
 }
 
-function LoanDetailModal({ loan, customer, payments, readOnly, onClose, onRegisterPayment }) {
+function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, onRegisterPayment }) {
     const totalPayable = loanTotalPayable(loan);
-    const outstanding = loanOutstanding(loan);
+    const baseOutstanding = loanOutstanding(loan);
+    const lateFeeOutstanding = loanLateFeeOutstanding(loan, state);
+    const outstanding = loanOutstandingWithPenalty(loan, state);
     const installment = loanInstallment(loan);
     const nextDue = loanNextDueDate(loan);
     const maturity = loanMaturityDate(loan);
@@ -164,12 +167,15 @@ function LoanDetailModal({ loan, customer, payments, readOnly, onClose, onRegist
 
                 <section className="loan-detail-hero">
                     <div className="loan-hero-balance">
-                        <p className="eyebrow">Saldo pendiente</p>
+                        <p className="eyebrow">Saldo pendiente total</p>
                         <h2>{money(outstanding)}</h2>
                         <div className="loan-detail-meta-row">
                             <span className="status status-pending">Vence {formatDate(nextDue)}</span>
                             <span className="muted small">Cierre {formatDate(maturity)}</span>
                         </div>
+                        {lateFeeOutstanding > 0 && (
+                            <p className="muted small">Incluye mora acumulada: {money(lateFeeOutstanding)} · Base: {money(baseOutstanding)}</p>
+                        )}
                     </div>
 
                     <div className="loan-hero-progress">
@@ -269,6 +275,10 @@ function LoanDetailModal({ loan, customer, payments, readOnly, onClose, onRegist
                                 <div className="metric">
                                     <p>Recuperado</p>
                                     <strong>{money(loan.paidAmount)}</strong>
+                                </div>
+                                <div className="metric">
+                                    <p>Mora actual</p>
+                                    <strong>{money(lateFeeOutstanding)}</strong>
                                 </div>
                             </div>
                         </div>

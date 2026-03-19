@@ -68,6 +68,7 @@ export default function Settings() {
     const [pushLoading, setPushLoading] = useState(false);
     const [pushSaving, setPushSaving] = useState(false);
     const [pushTesting, setPushTesting] = useState(false);
+    const [passwordSaving, setPasswordSaving] = useState(false);
     const [formData, setFormData] = useState({
         personalLoanRate: '',
         businessLoanRate: '',
@@ -95,6 +96,11 @@ export default function Settings() {
         subscriptionCount: 0,
         timezone: 'America/Santo_Domingo',
         vapidPublicKey: ''
+    });
+    const [passwordForm, setPasswordForm] = useState({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
     });
     const isReadOnlySubscription = ['suspended', 'cancelled'].includes(String(state?.subscription?.status || '').toLowerCase());
     const calendarFeatureEnabled = Boolean(state?.subscription?.features?.calendarIcsEnabled);
@@ -141,6 +147,11 @@ export default function Settings() {
     const handleChange = (e) => {
         const { name, value } = e.target;
         setFormData((prev) => ({ ...prev, [name]: value }));
+    };
+
+    const handlePasswordChange = (e) => {
+        const { name, value } = e.target;
+        setPasswordForm((prev) => ({ ...prev, [name]: value }));
     };
 
     useEffect(() => {
@@ -380,6 +391,40 @@ export default function Settings() {
         }
     };
 
+    const saveNewPassword = async () => {
+        if (!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+            showToast('Completa los tres campos de contrasena');
+            return;
+        }
+
+        if (passwordForm.newPassword.length < 8) {
+            showToast('La nueva contrasena debe tener al menos 8 caracteres');
+            return;
+        }
+
+        if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+            showToast('La confirmacion de contrasena no coincide');
+            return;
+        }
+
+        try {
+            setPasswordSaving(true);
+            const response = await apiRequest('/auth/change-password', {
+                method: 'POST',
+                body: {
+                    currentPassword: passwordForm.currentPassword,
+                    newPassword: passwordForm.newPassword
+                }
+            });
+            setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+            showToast(response?.message || 'Contrasena actualizada correctamente');
+        } catch (error) {
+            showToast(error.message || 'No se pudo actualizar la contrasena');
+        } finally {
+            setPasswordSaving(false);
+        }
+    };
+
     const usesLocalhostCalendarUrl = /:\/\/(localhost|127\.0\.0\.1|\[::1\]|::1)(:|\/|$)/i.test(
         String(calendarLinks.feedUrl || '')
     );
@@ -398,6 +443,51 @@ export default function Settings() {
             </div>
 
             <form onSubmit={handleSave} className="settings-layout">
+                <SettingsSection
+                    icon="lock"
+                    title="Seguridad de acceso"
+                    description="Actualiza tu contrasena sin depender de soporte o del superadministrador."
+                >
+                    <div className="settings-grid cols-2">
+                        <SettingsField
+                            label="Contrasena actual"
+                            id="settings-current-password"
+                            name="currentPassword"
+                            type="password"
+                            autoComplete="current-password"
+                            value={passwordForm.currentPassword}
+                            onChange={handlePasswordChange}
+                        />
+                        <div />
+                        <SettingsField
+                            label="Nueva contrasena"
+                            id="settings-new-password"
+                            name="newPassword"
+                            type="password"
+                            autoComplete="new-password"
+                            value={passwordForm.newPassword}
+                            onChange={handlePasswordChange}
+                        />
+                        <SettingsField
+                            label="Confirmar nueva contrasena"
+                            id="settings-confirm-password"
+                            name="confirmPassword"
+                            type="password"
+                            autoComplete="new-password"
+                            value={passwordForm.confirmPassword}
+                            onChange={handlePasswordChange}
+                        />
+                    </div>
+                    <p className="muted small" style={{ marginTop: '0.9rem' }}>
+                        Usa al menos 8 caracteres. Si olvidaste tu clave por completo, tambien puedes usar el flujo de recuperacion desde el login.
+                    </p>
+                    <div className="settings-save-row" style={{ justifyContent: 'flex-start' }}>
+                        <button type="button" className="btn btn-primary" onClick={saveNewPassword} disabled={passwordSaving}>
+                            {passwordSaving ? 'Actualizando...' : 'Actualizar contrasena'}
+                        </button>
+                    </div>
+                </SettingsSection>
+
                 <SettingsSection
                     icon="workspace_premium"
                     title="Plan y capacidad"
@@ -505,11 +595,11 @@ export default function Settings() {
                 <SettingsSection
                     icon="gavel"
                     title="Penalidades y plazos"
-                    description="Configura la mora y periodos de gracia."
+                    description="Configura mora diaria sobre cuota vencida y periodos de gracia."
                 >
                     <div className="settings-grid cols-2">
                         <SettingsField
-                            label="Penalidad por mora mensual"
+                            label="Penalidad diaria por mora"
                             id="settings-penalty"
                             name="latePenaltyRate"
                             type="number"
@@ -532,6 +622,9 @@ export default function Settings() {
                             required
                         />
                     </div>
+                    <p className="muted small">
+                        Formula aplicada: si se supera la gracia, mora = cuota vencida x (% / 100) x dias desde el vencimiento.
+                    </p>
                 </SettingsSection>
 
                 <SettingsSection

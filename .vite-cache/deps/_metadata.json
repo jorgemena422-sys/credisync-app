@@ -2,51 +2,60 @@
   "hash": "8d6d788c",
   "configHash": "7c68ee7e",
   "lockfileHash": "fda3ed13",
-  "browserHash": "5d94c185",
+  "browserHash": "d8a800f4",
   "optimized": {
     "react": {
       "src": "../../node_modules/react/index.js",
       "file": "react.js",
-      "fileHash": "9dfc5cf0",
+      "fileHash": "d918ab16",
       "needsInterop": true
     },
     "react-dom": {
       "src": "../../node_modules/react-dom/index.js",
       "file": "react-dom.js",
-      "fileHash": "9b1ffa94",
+      "fileHash": "c7780a5c",
       "needsInterop": true
     },
     "react/jsx-dev-runtime": {
       "src": "../../node_modules/react/jsx-dev-runtime.js",
       "file": "react_jsx-dev-runtime.js",
-      "fileHash": "d4b7d9fd",
+      "fileHash": "b8c13e4f",
       "needsInterop": true
     },
     "react/jsx-runtime": {
       "src": "../../node_modules/react/jsx-runtime.js",
       "file": "react_jsx-runtime.js",
-      "fileHash": "87a6e415",
+      "fileHash": "6c1a1575",
       "needsInterop": true
+    },
+    "@supabase/supabase-js": {
+      "src": "../../node_modules/@supabase/supabase-js/dist/index.mjs",
+      "file": "@supabase_supabase-js.js",
+      "fileHash": "efc59afe",
+      "needsInterop": false
     },
     "react-dom/client": {
       "src": "../../node_modules/react-dom/client.js",
       "file": "react-dom_client.js",
-      "fileHash": "ed51dcd0",
+      "fileHash": "c0a437fd",
       "needsInterop": true
     },
     "react-router-dom": {
       "src": "../../node_modules/react-router-dom/dist/index.mjs",
       "file": "react-router-dom.js",
-      "fileHash": "51d148bd",
+      "fileHash": "367f75a3",
       "needsInterop": false
     }
   },
   "chunks": {
-    "chunk-CTR2TRY5": {
-      "file": "chunk-CTR2TRY5.js"
+    "chunk-O2TXMA6R": {
+      "file": "chunk-O2TXMA6R.js"
     },
-    "chunk-G4V7ITBN": {
-      "file": "chunk-G4V7ITBN.js"
+    "chunk-NO6UH6X3": {
+      "file": "chunk-NO6UH6X3.js"
+    },
+    "chunk-5WRI5ZAA": {
+      "file": "chunk-5WRI5ZAA.js"
     }
   }
 }

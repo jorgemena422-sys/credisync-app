@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CrediSync">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a5a88"/>
+      <stop offset="1" stop-color="#22a06b"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#071226"/>
+  <rect x="44" y="44" width="424" height="424" rx="92" fill="url(#g)"/>
+  <path d="M130 306c0-66 54-120 120-120 42 0 79 22 101 55l-35 24c-14-20-37-33-66-33-41 0-74 33-74 74s33 74 74 74c29 0 53-13 66-34l35 24c-22 34-59 56-101 56-66 0-120-54-120-120z" fill="#ffffff"/>
+</svg>

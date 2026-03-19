@@ -219,7 +219,7 @@ export default function SuperadminSettings() {
                             <Field label="Tasa negocio (%)"><input name="businessLoanRate" type="number" step="0.01" value={formData.tenantDefaults.businessLoanRate} onChange={handleTenantDefaultChange} /></Field>
                             <Field label="Tasa hipotecaria (%)"><input name="mortgageLoanRate" type="number" step="0.01" value={formData.tenantDefaults.mortgageLoanRate} onChange={handleTenantDefaultChange} /></Field>
                             <Field label="Tasa vehicular (%)"><input name="autoLoanRate" type="number" step="0.01" value={formData.tenantDefaults.autoLoanRate} onChange={handleTenantDefaultChange} /></Field>
-                            <Field label="Penalidad mora (%)"><input name="latePenaltyRate" type="number" step="0.01" value={formData.tenantDefaults.latePenaltyRate} onChange={handleTenantDefaultChange} /></Field>
+                            <Field label="Penalidad mora diaria (%)"><input name="latePenaltyRate" type="number" step="0.01" value={formData.tenantDefaults.latePenaltyRate} onChange={handleTenantDefaultChange} /></Field>
                             <Field label="Dias de gracia"><input name="graceDays" type="number" value={formData.tenantDefaults.graceDays} onChange={handleTenantDefaultChange} /></Field>
                             <Field label="Score autoaprobacion"><input name="autoApprovalScore" type="number" value={formData.tenantDefaults.autoApprovalScore} onChange={handleTenantDefaultChange} /></Field>
                             <Field label="Max deuda / ingreso (%)"><input name="maxDebtToIncome" type="number" step="0.01" value={formData.tenantDefaults.maxDebtToIncome} onChange={handleTenantDefaultChange} /></Field>

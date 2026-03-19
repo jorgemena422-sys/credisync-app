@@ -3,7 +3,7 @@ import Drawer from './Drawer';
 import { apiRequest } from '../utils/api';
 import { useToast } from '../context/ToastContext';
 import { useApp } from '../context/AppContext';
-import { isoToday, loanOutstanding, money } from '../utils/helpers';
+import { isoToday, loanInstallment, loanLateFeeOutstanding, loanOutstanding, loanOutstandingWithPenalty, money, round2 } from '../utils/helpers';
 
 export default function NewPaymentDrawer({ isOpen, onClose }) {
     const { showToast } = useToast();
@@ -12,33 +12,107 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
 
     const [formData, setFormData] = useState({
         loanId: '',
-        amount: '',
+        baseAmount: '',
+        lateFeeAmount: '',
+        generateReceiptPdf: true,
         method: 'transfer',
         date: isoToday()
     });
 
     const selectedLoan = state.loans.find(l => String(l.id) === String(formData.loanId));
-    const outstanding = selectedLoan ? loanOutstanding(selectedLoan) : 0;
+    const baseOutstanding = selectedLoan ? loanOutstanding(selectedLoan) : 0;
+    const lateFeeOutstanding = selectedLoan ? loanLateFeeOutstanding(selectedLoan, state) : 0;
+    const outstanding = selectedLoan ? loanOutstandingWithPenalty(selectedLoan, state) : 0;
     const selectedCustomer = selectedLoan ? state.customers.find(c => c.id === selectedLoan.customerId) : null;
+    const installment = selectedLoan ? loanInstallment(selectedLoan) : 0;
+
+    const rawBaseAmount = Number(formData.baseAmount || 0);
+    const rawLateFeeAmount = Number(formData.lateFeeAmount || 0);
+    const baseAmount = Number.isFinite(rawBaseAmount) ? Math.max(rawBaseAmount, 0) : 0;
+    const lateFeeAmount = Number.isFinite(rawLateFeeAmount) ? Math.max(rawLateFeeAmount, 0) : 0;
+    const totalAmount = round2(baseAmount + lateFeeAmount);
+
+    const dueInstallmentBase = (() => {
+        if (!selectedLoan || installment <= 0 || baseOutstanding <= 0) return 0;
+        const paidAmount = Number(selectedLoan.paidAmount || 0);
+        const paidInstallments = Math.floor((paidAmount + 0.00001) / installment);
+        const paidInCurrentInstallment = Math.max(round2(paidAmount - (paidInstallments * installment)), 0);
+        const remainingCurrentInstallment = round2(Math.max(installment - paidInCurrentInstallment, 0));
+        const currentDue = remainingCurrentInstallment <= 0.01 ? installment : remainingCurrentInstallment;
+        return round2(Math.min(currentDue, baseOutstanding));
+    })();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.loanId || !formData.amount) {
-            showToast('Selecciona un prestamo y especifica el monto');
+        if (!formData.loanId || totalAmount <= 0) {
+            showToast('Selecciona un prestamo y especifica cuota o mora');
             return;
         }
 
         try {
             setLoading(true);
-            await apiRequest('/payments', {
+            const response = await apiRequest('/payments', {
                 method: 'POST',
                 body: {
-                    ...formData,
-                    amount: parseFloat(formData.amount),
+                    loanId: formData.loanId,
+                    method: formData.method,
+                    date: formData.date,
+                    amount: totalAmount,
+                    baseAmount: round2(baseAmount),
+                    lateFeeAmount: round2(lateFeeAmount)
                 }
             });
-            showToast('Pago registrado exitosamente');
-            setFormData({ loanId: '', amount: '', method: 'transfer', date: isoToday() });
+
+            const paymentId = String(response?.payment?.id || '').trim();
+            const lateFeeApplied = Number(response?.allocation?.lateFeeApplied || 0);
+            const baseApplied = Number(response?.allocation?.baseApplied || 0);
+
+            if (lateFeeApplied > 0) {
+                showToast(`Pago registrado. ${money(baseApplied)} al prestamo y ${money(lateFeeApplied)} a mora.`);
+            } else {
+                showToast('Pago registrado exitosamente');
+            }
+
+            if (paymentId && formData.generateReceiptPdf) {
+                try {
+                    const receiptResponse = await fetch(`/api/payments/${encodeURIComponent(paymentId)}/receipt.pdf`, {
+                        method: 'GET',
+                        credentials: 'include'
+                    });
+
+                    if (!receiptResponse.ok) {
+                        let message = `No se pudo generar el comprobante (${receiptResponse.status})`;
+                        try {
+                            const payload = await receiptResponse.json();
+                            if (payload?.message) message = payload.message;
+                        } catch (_error) {
+                            // ignore JSON parsing errors
+                        }
+                        throw new Error(message);
+                    }
+
+                    const blob = await receiptResponse.blob();
+                    const downloadUrl = URL.createObjectURL(blob);
+                    const anchor = document.createElement('a');
+                    anchor.href = downloadUrl;
+                    anchor.download = `comprobante-${paymentId}.pdf`;
+                    document.body.appendChild(anchor);
+                    anchor.click();
+                    anchor.remove();
+                    URL.revokeObjectURL(downloadUrl);
+                } catch (receiptError) {
+                    showToast(receiptError.message || 'Pago registrado, pero fallo la descarga del comprobante');
+                }
+            }
+
+            setFormData({
+                loanId: '',
+                baseAmount: '',
+                lateFeeAmount: '',
+                generateReceiptPdf: true,
+                method: 'transfer',
+                date: isoToday()
+            });
             await bootstrapState();
             onClose();
         } catch (err) {
@@ -50,7 +124,29 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
 
     const handleSetMax = () => {
         if (selectedLoan && outstanding > 0) {
-            setFormData({ ...formData, amount: outstanding.toFixed(2) });
+            setFormData({
+                ...formData,
+                baseAmount: baseOutstanding > 0 ? baseOutstanding.toFixed(2) : '',
+                lateFeeAmount: lateFeeOutstanding > 0 ? lateFeeOutstanding.toFixed(2) : ''
+            });
+        }
+    };
+
+    const handleSetInstallmentOnly = () => {
+        if (selectedLoan && dueInstallmentBase > 0) {
+            setFormData({
+                ...formData,
+                baseAmount: dueInstallmentBase.toFixed(2)
+            });
+        }
+    };
+
+    const handleSetLateFeeOnly = () => {
+        if (selectedLoan && lateFeeOutstanding > 0) {
+            setFormData({
+                ...formData,
+                lateFeeAmount: lateFeeOutstanding.toFixed(2)
+            });
         }
     };
 
@@ -62,7 +158,7 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                 <section className="drawer-hero">
                     <div className="drawer-hero-main">
                         <p className="eyebrow">Monto aplicado</p>
-                        <h2>{formData.amount ? money(Number(formData.amount)) : money(0)}</h2>
+                        <h2>{money(totalAmount)}</h2>
                         <div className="loan-detail-meta-row">
                             <span className="status status-pending">{selectedLoan ? `Prestamo ${selectedLoan.id}` : 'Selecciona un prestamo'}</span>
                             <span className="small muted">{selectedCustomer ? selectedCustomer.name : 'Cliente pendiente'}</span>
@@ -77,7 +173,7 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                                 required
                                 value={formData.loanId}
                                 onChange={e => {
-                                    setFormData({ ...formData, loanId: e.target.value, amount: '' });
+                                    setFormData({ ...formData, loanId: e.target.value, baseAmount: '', lateFeeAmount: '' });
                                 }}
                             >
                                 <option value="" disabled>Selecciona un prestamo activo</option>
@@ -85,7 +181,7 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                                     const customer = state.customers.find(c => c.id === l.customerId);
                                     return (
                                         <option key={l.id} value={l.id}>
-                                            ID: {l.id} - {customer ? customer.name : 'Desc.'} - Saldo: {money(loanOutstanding(l))}
+                                            ID: {l.id} - {customer ? customer.name : 'Desc.'} - Saldo: {money(loanOutstandingWithPenalty(l, state))}
                                         </option>
                                     );
                                 })}
@@ -93,34 +189,73 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                         </div>
 
                         <div className="form-group">
-                            <label>Monto a pagar ($)</label>
+                            <label>Cuota / base a pagar ($)</label>
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
                                 <input
                                     type="number"
-                                    required
-                                    min="0.01"
+                                    min="0"
                                     step="0.01"
-                                    max={outstanding > 0 ? outstanding : undefined}
-                                    placeholder="Ej. 1500"
-                                    value={formData.amount}
-                                    onChange={e => setFormData({ ...formData, amount: e.target.value })}
+                                    max={baseOutstanding > 0 ? baseOutstanding : undefined}
+                                    placeholder="Ej. 4000"
+                                    value={formData.baseAmount}
+                                    onChange={e => setFormData({ ...formData, baseAmount: e.target.value })}
                                     style={{ flex: 1 }}
                                 />
                                 <button
                                     type="button"
                                     className="btn btn-ghost"
-                                    onClick={handleSetMax}
-                                    disabled={!selectedLoan || outstanding <= 0}
-                                    title="Liquidar saldo"
+                                    onClick={handleSetInstallmentOnly}
+                                    disabled={!selectedLoan || dueInstallmentBase <= 0}
+                                    title="Pagar cuota vencida"
                                 >
-                                    Liquidar
+                                    Cuota
+                                </button>
+                            </div>
+                            <small className="muted" style={{ display: 'block', marginTop: '0.25rem' }}>
+                                Cuota vencida estimada: {money(dueInstallmentBase)}
+                            </small>
+                        </div>
+
+                        <div className="form-group">
+                            <label>Mora a pagar ($)</label>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    max={lateFeeOutstanding > 0 ? lateFeeOutstanding : undefined}
+                                    placeholder="Ej. 350"
+                                    value={formData.lateFeeAmount}
+                                    onChange={e => setFormData({ ...formData, lateFeeAmount: e.target.value })}
+                                    style={{ flex: 1 }}
+                                />
+                                <button
+                                    type="button"
+                                    className="btn btn-ghost"
+                                    onClick={handleSetLateFeeOnly}
+                                    disabled={!selectedLoan || lateFeeOutstanding <= 0}
+                                    title="Pagar mora pendiente"
+                                >
+                                    Mora
                                 </button>
                             </div>
                             {selectedLoan && (
-                                <small className="muted" style={{ display: 'block', marginTop: '0.25rem' }}>
-                                    Saldo actual: {money(outstanding)}
-                                </small>
+                                <div className="cell-stack" style={{ marginTop: '0.25rem' }}>
+                                    <small className="muted">Saldo total: {money(outstanding)}</small>
+                                    {lateFeeOutstanding > 0 && <small className="muted">Mora acumulada: {money(lateFeeOutstanding)}</small>}
+                                    <small className="muted">Saldo base: {money(baseOutstanding)}</small>
+                                </div>
                             )}
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                                <button
+                                    type="button"
+                                    className="btn btn-ghost"
+                                    onClick={handleSetMax}
+                                    disabled={!selectedLoan || outstanding <= 0}
+                                >
+                                    Liquidar todo
+                                </button>
+                            </div>
                         </div>
 
                         <div className="form-group">
@@ -145,6 +280,20 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                                 value={formData.date}
                                 onChange={e => setFormData({ ...formData, date: e.target.value })}
                             />
+                        </div>
+
+                        <div className="form-group payment-receipt-group" style={{ marginTop: '0.35rem' }}>
+                            <label>Comprobante</label>
+                            <div className="payment-receipt-card" aria-live="polite">
+                                <div className="payment-receipt-icon">
+                                    <span className="material-symbols-outlined">picture_as_pdf</span>
+                                </div>
+                                <div className="payment-receipt-copy cell-stack">
+                                    <strong>Comprobante de pago PDF</strong>
+                                    <span className="muted small">Se descargara automaticamente al registrar el pago.</span>
+                                </div>
+                                <span className="status status-active">Activo</span>
+                            </div>
                         </div>
 
                         <div className="form-group" style={{ marginTop: '0.35rem' }}>

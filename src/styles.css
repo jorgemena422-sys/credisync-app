@@ -1,11 +1,15 @@
 :root {
+  /* Brand Colors for Password Reset Pages */
+  --brand-dark: #121417;
+  --brand-card: #1c1f24;
+  --brand-accent: #3b82f6;
+  --brand-border: #2d323a;
+  --brand-textMuted: #9ca3af;
+
   /* Core Foundation Colors */
   --bg-deep: #09090b;
-  /* Very dark zinc */
   --bg-mid: #18181b;
-  /* Dark zinc */
   --bg-soft: #27272a;
-  /* Lighter zinc */
 
   /* Panels and Glassmorphism */
   --panel: #ffffff;
@@ -54,6 +58,15 @@
   --shadow-panel: 0 20px 40px rgba(0, 0, 0, 0.4);
   --shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.15);
   --dock-clearance: 7.25rem;
+}
+
+/* Forzar fondo oscuro - FIX para tarjetas blancas */
+html, body, #root {
+  background-color: var(--bg-deep) !important;
+  background-image:
+    radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.06), transparent 25%) !important;
+  background-attachment: fixed !important;
 }
 
 * {
@@ -256,7 +269,7 @@ h4,
 }
 
 .card {
-  background: var(--surface);
+  background: linear-gradient(180deg, rgba(24, 24, 27, 0.95), rgba(24, 24, 27, 0.88)); /* FIX: fondo oscuro sólido en lugar de var(--surface) transparente */
   border: 1px solid var(--line);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-panel);
@@ -1222,6 +1235,52 @@ body.drawer-open .dockbar {
 
 .drawer-form-shell .btn-primary {
   box-shadow: 0 10px 24px rgba(59, 130, 246, 0.35);
+}
+
+.payment-receipt-group {
+  gap: 0.6rem;
+}
+
+.payment-receipt-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  padding: 1rem 1.05rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.14), rgba(59, 130, 246, 0.04)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.payment-receipt-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: rgba(59, 130, 246, 0.16);
+  color: #7cb4ff;
+  flex: 0 0 auto;
+}
+
+.payment-receipt-icon .material-symbols-outlined {
+  font-size: 1.5rem;
+}
+
+.payment-receipt-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.payment-receipt-copy strong {
+  color: var(--ink);
+}
+
+.payment-receipt-copy span {
+  line-height: 1.4;
 }
 
 .topbar {
@@ -2216,7 +2275,7 @@ tr:hover td {
 .superadmin-chip {
   border: 1px solid var(--line);
   background: var(--surface);
-  color: var(--muted);
+  color: var(--ink); /* Changed from var(--muted) to var(--ink) for better contrast */
   border-radius: 999px;
   padding: 0.45rem 0.8rem;
   font-size: 0.84rem;
@@ -2227,7 +2286,7 @@ tr:hover td {
 
 .superadmin-chip:hover {
   background: var(--surface-hover);
-  color: var(--ink);
+  color: #fff; /* Ensure hover text is clear */
 }
 
 .superadmin-chip.active {
@@ -2358,11 +2417,46 @@ tr:hover td {
 
 .superadmin-focus-card {
   border: 1px solid rgba(141, 170, 229, 0.42);
-  background: linear-gradient(165deg, rgba(249, 252, 255, 0.86), rgba(237, 245, 255, 0.76));
+  background: linear-gradient(165deg, rgba(249, 252, 255, 0.95), rgba(237, 245, 255, 0.9));
   border-radius: 14px;
   padding: 0.95rem;
   display: grid;
   gap: 0.55rem;
+  color: #1e293b; /* Dark text for light background */
+}
+
+.superadmin-focus-card h3,
+.superadmin-focus-card h4 {
+  color: #0f172a;
+}
+
+.superadmin-focus-card .muted,
+.superadmin-focus-card .eyebrow {
+  color: #475569;
+}
+
+.superadmin-focus-card .metric strong {
+  color: #1e293b;
+}
+
+.superadmin-focus-card .status-inactive {
+  background: rgba(0, 0, 0, 0.08);
+  color: #475569;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.superadmin-focus-card .status-active {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #bbf7d0;
+}
+
+.superadmin-focus-card .cell-stack strong {
+  color: #0f172a;
+}
+
+.superadmin-focus-card .cell-stack .tiny {
+  color: #64748b;
 }
 
 .stack-item {
@@ -2483,11 +2577,19 @@ tr:hover td {
     display: block;
     border: 1px solid rgba(139, 167, 226, 0.46);
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.64);
+    background: #ffffff; /* Solid white for better readability */
     box-shadow: 0 8px 18px rgba(18, 34, 69, 0.08);
+    padding: 0.25rem 0;
     overflow: hidden;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    color: #1e293b; /* Dark text for mobile card rows */
+  }
+
+  .table-wrap tr td strong {
+    color: #0f172a;
+  }
+
+  .table-wrap tr td span.muted {
+    color: #64748b;
   }
 
   .table-wrap td {
@@ -3249,6 +3351,11 @@ input[type="range"] {
     grid-template-columns: 1fr;
   }
 
+  .payment-receipt-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
   /* Detail grid */
   .detail-grid {
     grid-template-columns: 1fr;
@@ -3912,8 +4019,18 @@ input[type="range"] {
     min-width: 44px;
     min-height: 44px;
   }
+}
 
-  .calendar-day {
-    min-height: 36px;
-  }
+/* ===== Password Reset Pages Styles ===== */
+.btn-glow {
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+}
+
+.icon-glow {
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0) 70%);
+}
+
+.dark-input-focus:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #3b82f6;
 }

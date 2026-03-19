@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { money, loanNextDueDate, loanPendingInstallments, loanOutstanding, loanInstallment, capitalBudget, capitalCommittedFromLoans, capitalAvailable, capitalUsagePct, sum, formatDate, paymentBreakdown, nameFromEmail, startOfDay } from '../utils/helpers';
+import { money, loanNextDueDate, loanPendingInstallments, loanOutstanding, loanInstallment, capitalBudget, capitalCommittedFromLoans, capitalAvailable, capitalUsagePct, sum, formatDate, paymentBreakdown, nameFromEmail, startOfDay, loanLateFeePaid, round2, loanTotalPayable } from '../utils/helpers';
 import { Link } from 'react-router-dom';
 import { useDrawer } from '../context/DrawerContext';
 
@@ -20,11 +20,11 @@ function kpiIcon(label) {
     if (text.includes('capital disponible')) return 'savings';
     if (text.includes('capital comprometido') || text.includes('uso de capital')) return 'toll';
     if (text.includes('capital budget') || text.includes('presupuesto')) return 'account_balance';
+    if (text.includes('interes + mora') || text.includes('interes y mora') || text.includes('intereses') || text.includes('ganancia')) return 'show_chart';
     if (text.includes('cobrado') || text.includes('recuperacion')) return 'paid';
     if (text.includes('vencido') || text.includes('mora')) return 'warning';
     if (text.includes('activo')) return 'task_alt';
     if (text.includes('saldo')) return 'account_balance_wallet';
-    if (text.includes('intereses') || text.includes('ganancia')) return 'show_chart';
     if (text.includes('capital cobrado')) return 'payments';
     return 'monitoring';
 }
@@ -221,20 +221,20 @@ export default function Dashboard() {
     
     let totalPrincipalCollected = 0;
     let totalInterestCollected = 0;
-    
-    // Iterate through all payments and use the helper to split the amounts
-    state.payments.forEach(payment => {
-        // Find the associated loan to know the ratio
-        const loan = state.loans.find(l => l.id === payment.loanId);
-        if (loan) {
-            const breakdown = paymentBreakdown(loan, payment.amount);
-            totalPrincipalCollected += breakdown.principal;
-            totalInterestCollected += breakdown.interest;
-        } else {
-            // Fallback (should not happen in valid data, but just in case, treat as principal)
-            totalPrincipalCollected += Number(payment.amount) || 0;
-        }
+    let totalLateFeeCollected = 0;
+
+    state.loans.forEach((loan) => {
+        const basePaid = Math.max(Math.min(Number(loan.paidAmount || 0), loanTotalPayable(loan)), 0);
+        const breakdown = paymentBreakdown(loan, basePaid);
+        totalPrincipalCollected += breakdown.principal;
+        totalInterestCollected += breakdown.interest;
+        totalLateFeeCollected += loanLateFeePaid(loan, state);
     });
+
+    totalPrincipalCollected = round2(totalPrincipalCollected);
+    totalInterestCollected = round2(totalInterestCollected);
+    totalLateFeeCollected = round2(totalLateFeeCollected);
+    const totalInterestAndLateFeeCollected = round2(totalInterestCollected + totalLateFeeCollected);
 
     const rows = state.loans
         .filter(loan => {
@@ -281,7 +281,7 @@ export default function Dashboard() {
             <div className="dashboard-kpi-row kpi-grid">
                 <KpiCard label="Balance disponible" value={money(available)} tone="good" />
                 <KpiCard label="Capital cobrado" value={money(totalPrincipalCollected)} tone="neutral" />
-                <KpiCard label="Intereses ganados" value={money(totalInterestCollected)} tone="good" />
+                <KpiCard label="Interes + mora ganados" value={money(totalInterestAndLateFeeCollected)} tone="good" />
                 <KpiCard label="Saldo por cobrar" value={money(totalOutstanding)} tone="warn" />
             </div>
 

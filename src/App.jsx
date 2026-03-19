@@ -7,6 +7,9 @@ import { DrawerProvider } from './context/DrawerContext';
 
 // Temporary Page Placeholders until populated
 import Login from './pages/Login';
+import ResetPassword from './pages/ResetPassword';
+import ResetPasswordCode from './pages/ResetPasswordCode';
+import ResetPasswordNew from './pages/ResetPasswordNew';
 import Dashboard from './pages/Dashboard';
 import Loans from './pages/Loans';
 import Customers from './pages/Customers';
@@ -27,10 +30,15 @@ import Layout from './components/Layout';
 const AppRoutes = () => {
     const { currentUser, isSuperadmin } = useAuth();
 
+    // Allow public access to password reset pages
     if (currentUser === null) {
         return (
             <Routes>
-                <Route path="*" element={<Login />} />
+                <Route path="/" element={<Login />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="/reset-password-code" element={<ResetPasswordCode />} />
+                <Route path="/reset-password-new" element={<ResetPasswordNew />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
         );
     }

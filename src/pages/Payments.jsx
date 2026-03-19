@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { apiRequest } from '../utils/api';
 import { useToast } from '../context/ToastContext';
-import { daysOverdue, formatDate, isoToday, loanInstallment, loanNextDueDate, loanOutstanding, money, startOfDay } from '../utils/helpers';
+import { daysOverdue, formatDate, isoToday, loanInstallment, loanLateFeeOutstanding, loanNextDueDate, loanOutstandingWithPenalty, money, startOfDay } from '../utils/helpers';
 import { useDrawer } from '../context/DrawerContext';
 
 const PROMISE_STATUS_LABELS = {
@@ -98,7 +98,8 @@ export default function Payments() {
                 const dueDay = dueDate ? startOfDay(dueDate) : null;
                 const daysUntilDue = dueDay ? Math.floor((dueDay - today) / 86400000) : 999;
                 const overdueDays = daysOverdue(loan, state);
-                const outstanding = loanOutstanding(loan);
+                const lateFeeOutstanding = loanLateFeeOutstanding(loan, state);
+                const outstanding = loanOutstandingWithPenalty(loan, state);
                 const installment = loanInstallment(loan);
                 const pendingPromise = pendingByLoan.get(loan.id) || null;
                 const loanPromises = promisesByLoan.get(loan.id) || [];
@@ -130,6 +131,7 @@ export default function Payments() {
                     daysUntilDue,
                     overdueDays,
                     outstanding,
+                    lateFeeOutstanding,
                     installment,
                     pendingPromise,
                     priority: priorityMeta({ overdueDays, daysUntilDue }),
@@ -180,7 +182,7 @@ export default function Payments() {
             return;
         }
 
-        const suggested = Math.min(loanInstallment(loan), loanOutstanding(loan));
+        const suggested = Math.min(loanInstallment(loan) + loanLateFeeOutstanding(loan, state), loanOutstandingWithPenalty(loan, state));
         setPromiseForm((prev) => ({
             ...prev,
             loanId,
@@ -341,8 +343,13 @@ export default function Payments() {
                                                 </span>
                                             </div>
                                         </td>
-                                        <td data-label="Cuota estimada">{money(Math.min(item.installment, item.outstanding))}</td>
-                                        <td data-label="Saldo">{money(item.outstanding)}</td>
+                                        <td data-label="Cuota estimada">{money(Math.min(item.installment + item.lateFeeOutstanding, item.outstanding))}</td>
+                                        <td data-label="Saldo">
+                                            <div className="cell-stack">
+                                                <strong>{money(item.outstanding)}</strong>
+                                                {item.lateFeeOutstanding > 0 && <small className="muted">Mora: {money(item.lateFeeOutstanding)}</small>}
+                                            </div>
+                                        </td>
                                         <td data-label="Riesgo">
                                             <div className="cell-stack">
                                                 <strong>{item.risk.score}/100</strong>

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+
+<html class="h-full" lang="es"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Restablecer Contraseña - Microloan Portfolio</title>
+<!-- BEGIN: Tailwind CSS CDN -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- END: Tailwind CSS CDN -->
+<!-- BEGIN: Tailwind Configuration -->
+<script data-purpose="tailwind-config">
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              dark: '#121417',
+              card: '#1c1f24',
+              accent: '#3b82f6',
+              border: '#2d323a',
+              textMuted: '#9ca3af',
+            }
+          }
+        }
+      }
+    }
+  </script>
+<!-- END: Tailwind Configuration -->
+<!-- BEGIN: Custom Styles -->
+<style data-purpose="custom-glow-effects">
+    /* Subtle glow for the primary button to match the reference image */
+    .btn-glow {
+      box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+    }
+    /* Icon background glow effect */
+    .icon-glow {
+      background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0) 70%);
+    }
+    /* Input focus styling for dark theme */
+    .dark-input-focus:focus-within {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 1px #3b82f6;
+    }
+  </style>
+<!-- END: Custom Styles -->
+</head>
+<body class="bg-brand-dark h-full flex items-center justify-center font-sans antialiased text-white">
+<!-- BEGIN: Forgot Password Card -->
+<main class="w-full max-w-[506px] p-4" data-purpose="forgot-password-container">
+<div class="bg-brand-card border border-brand-border rounded-[2.5rem] p-8 md:p-12 shadow-2xl">
+<!-- BEGIN: Header Section -->
+<section class="flex flex-col items-center text-center mb-8">
+<!-- Icon Container with Glow -->
+<div class="relative w-20 h-20 flex items-center justify-center mb-6">
+<div class="absolute inset-0 icon-glow rounded-full"></div>
+<div class="w-12 h-12 bg-[#252a33] rounded-full flex items-center justify-center border border-brand-border">
+<svg class="h-6 w-6 text-brand-accent" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 00-2 2zm10-10V7a4 4 0 00-8 0v4h8z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+</div>
+<h1 class="text-3xl font-bold mb-3 tracking-tight">Restablecer Contraseña</h1>
+<p class="text-brand-textMuted text-sm max-w-xs">
+          Ingresa tu correo electrónico para recibir una clave provisional
+        </p>
+</section>
+<!-- END: Header Section -->
+<!-- BEGIN: Form Section -->
+<form class="space-y-6" data-purpose="reset-password-form">
+<!-- Email Input Group -->
+<div class="space-y-2">
+<label class="block text-sm font-medium text-brand-textMuted ml-1" for="email">
+            Correo Electrónico
+          </label>
+<div class="relative dark-input-focus transition-all duration-200 bg-brand-dark border border-brand-border rounded-xl">
+<div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+<svg class="h-5 w-5 text-brand-textMuted" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+<input class="block w-full pl-11 pr-4 py-4 bg-transparent border-none text-white placeholder-brand-textMuted focus:ring-0 rounded-xl text-md" id="email" name="email" placeholder="nombre@compania.com" required="" type="email"/>
+</div>
+</div>
+<!-- Action Buttons -->
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
+<!-- Primary Submit Button -->
+<button class="flex items-center justify-center gap-2 bg-brand-accent hover:bg-blue-600 text-white font-bold py-4 px-6 rounded-xl transition-all btn-glow" type="submit">
+<span>Enviar Clave</span>
+<svg class="h-5 w-5" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M14 5l7 7m0 0l-7 7m7-7H3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+<!-- Secondary Back Button -->
+<a class="flex items-center justify-center bg-[#252a33] hover:bg-[#2d333d] border border-brand-border text-white font-bold py-4 px-6 rounded-xl transition-all" href="#">
+            Volver
+          </a>
+</div>
+</form>
+<!-- END: Form Section -->
+</div>
+</main>
+<!-- END: Forgot Password Card -->
+</body></html>

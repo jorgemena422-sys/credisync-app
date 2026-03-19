@@ -103,11 +103,15 @@ CORS_ORIGIN=https://tu-dominio-final.com
 5. Build + deploy de Hosting:
 
 ```bash
-npm run build
 npm run deploy:hosting:prod
 ```
 
 Nota: el backend debe estar desplegado en el servicio indicado por `hosting.rewrites.run.serviceId`.
+
+Importante:
+- `deploy:hosting:prod` construye y publica `dist-prod`
+- `deploy:hosting:staging` construye y publica `dist-staging`
+- `npm run build` sigue reservado para pruebas locales del servidor Express usando `dist/`
 
 ## Staging seguro (mismo proyecto Firebase)
 
@@ -193,7 +197,6 @@ npm run deploy:staging:scheduler
 ### 5. Desplegar frontend staging
 
 ```bash
-npm run build
 npm run deploy:hosting:staging
 ```
 
@@ -212,8 +215,8 @@ Si quieres probar el entorno de staging completo:
 - registra solo dispositivos de prueba para push staging
 
 Notas operativas:
-- `deploy:all` ahora publica solo `prod`
-- `deploy:staging` despliega backend staging y hosting staging
+- `deploy:all` despliega backend prod y hosting prod usando `dist-prod`
+- `deploy:staging` despliega backend staging y hosting staging usando `dist-staging`
 - puedes mantener `preview channels` para revisar UI puntual, pero el staging real debe seguir yendo contra `credisync-api-staging`
 
 ## Push diario (PWA iPhone)

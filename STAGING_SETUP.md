@@ -76,6 +76,8 @@ npm run deploy:staging:backend
 npm run deploy:hosting:staging
 ```
 
+Este comando genera un build aislado en `dist-staging`, por lo que no reutiliza artefactos de produccion ni el build local de `dist/`.
+
 ### Deploy scheduler
 ```bash
 npm run deploy:staging:scheduler

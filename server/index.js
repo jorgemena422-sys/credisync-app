@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const webPush = require("web-push");
 const fs = require("fs");
 const path = require("path");
+const PDFDocument = require("pdfkit");
 const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
@@ -16,6 +17,11 @@ const PORT = Number(process.env.PORT || 3001);
 const SUPABASE_URL = String(process.env.SUPABASE_URL || "").trim();
 const SUPABASE_ANON_KEY = String(process.env.SUPABASE_ANON_KEY || "").trim();
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+const SUPABASE_URL_PROJECT_REF = (() => {
+  const match = SUPABASE_URL.match(/https:\/\/([a-z0-9]+)\.supabase\.co/i);
+  return match ? match[1] : "";
+})();
+const SUPABASE_PROJECT_REF = String(process.env.SUPABASE_PROJECT_REF || SUPABASE_URL_PROJECT_REF || "").trim();
 const SUPABASE_CLIENT_KEY = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
 const HAS_SUPABASE_SERVICE_ROLE_KEY = Boolean(SUPABASE_SERVICE_ROLE_KEY);
 const JWT_SECRET = String(process.env.JWT_SECRET || "").trim();
@@ -39,6 +45,10 @@ const APP_PUBLIC_URL = (() => {
 const PUSH_VAPID_PUBLIC_KEY = String(process.env.PUSH_VAPID_PUBLIC_KEY || "").trim();
 const PUSH_VAPID_PRIVATE_KEY = String(process.env.PUSH_VAPID_PRIVATE_KEY || "").trim();
 const PUSH_VAPID_SUBJECT = String(process.env.PUSH_VAPID_SUBJECT || "mailto:soporte@credisync.app").trim();
+const SENDGRID_API_KEY = String(process.env.SENDGRID_API_KEY || "").trim();
+const SENDGRID_FROM_EMAIL = String(process.env.SENDGRID_FROM_EMAIL || "").trim();
+const SENDGRID_FROM_NAME = String(process.env.SENDGRID_FROM_NAME || "CrediSync").trim();
+const SENDGRID_REPLY_TO_EMAIL = String(process.env.SENDGRID_REPLY_TO_EMAIL || SENDGRID_FROM_EMAIL || "").trim();
 const PUSH_DAILY_SUMMARY_JOB_TOKEN = String(process.env.PUSH_DAILY_SUMMARY_JOB_TOKEN || "").trim();
 const PUSH_DAILY_SUMMARY_LOCAL_HOUR = 8;
 const PUSH_DELIVERY_TYPE_DAILY_SUMMARY = "daily_summary";
@@ -60,13 +70,20 @@ const DEFAULT_SUBSCRIPTION_CYCLE = "monthly";
 const DEFAULT_TRIAL_DAYS = 14;
 const DEFAULT_BILLING_PERIOD_DAYS = 30;
 const SUBSCRIPTION_PLAN_CACHE_TTL_MS = 60 * 1000;
+const PASSWORD_RESET_CODE_TTL_MS = 15 * 60 * 1000;
+const PASSWORD_RESET_MAX_REQUESTS_PER_WINDOW = 5;
+const PASSWORD_RESET_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const PASSWORD_RESET_VERIFY_MAX_ATTEMPTS = 10;
+const PASSWORD_CHANGE_MIN_LENGTH = 8;
 const CLIENT_DIST_DIR = path.resolve(__dirname, "../dist");
 const HAS_CLIENT_DIST = fs.existsSync(path.join(CLIENT_DIST_DIR, "index.html"));
 const HAS_WEB_PUSH_CONFIG = Boolean(PUSH_VAPID_PUBLIC_KEY && PUSH_VAPID_PRIVATE_KEY);
+const HAS_SENDGRID_CONFIG = Boolean(SENDGRID_API_KEY && SENDGRID_FROM_EMAIL);
 let subscriptionPlanCache = {
   expiresAt: 0,
   plans: null
 };
+const passwordResetRateLimits = new Map();
 
 function invalidateSubscriptionPlanCache() {
   subscriptionPlanCache = {
@@ -91,6 +108,85 @@ function isValidHttpUrl(value) {
   }
 }
 
+function getRateLimitKey(parts) {
+  return parts.map((value) => String(value || "").trim().toLowerCase()).join("::");
+}
+
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+
+  return String(req.ip || req.socket?.remoteAddress || "unknown").trim();
+}
+
+function checkSimpleRateLimit(bucketKey, limit, windowMs) {
+  const now = Date.now();
+  const entry = passwordResetRateLimits.get(bucketKey);
+
+  if (!entry || now >= entry.resetAt) {
+    passwordResetRateLimits.set(bucketKey, {
+      count: 1,
+      resetAt: now + windowMs
+    });
+    return { allowed: true, remaining: limit - 1 };
+  }
+
+  if (entry.count >= limit) {
+    return {
+      allowed: false,
+      retryAfterMs: Math.max(entry.resetAt - now, 0)
+    };
+  }
+
+  entry.count += 1;
+  passwordResetRateLimits.set(bucketKey, entry);
+  return { allowed: true, remaining: Math.max(limit - entry.count, 0) };
+}
+
+function enforcePasswordResetRateLimit(req, scopes) {
+  const ip = getClientIp(req);
+
+  for (const scope of scopes) {
+    const result = checkSimpleRateLimit(scope.key, scope.limit, scope.windowMs);
+    if (!result.allowed) {
+      const retryAfterSeconds = Math.max(Math.ceil(result.retryAfterMs / 1000), 1);
+      return {
+        allowed: false,
+        retryAfterSeconds,
+        message: scope.message
+      };
+    }
+  }
+
+  return { allowed: true, ip };
+}
+
+function buildPasswordResetLimitScopes(req, email, mode) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const ip = getClientIp(req);
+  const limit = mode === "verify" ? PASSWORD_RESET_VERIFY_MAX_ATTEMPTS : PASSWORD_RESET_MAX_REQUESTS_PER_WINDOW;
+  const message = mode === "verify"
+    ? "Demasiados intentos de verificacion. Intenta de nuevo en unos minutos."
+    : "Demasiadas solicitudes de recuperacion. Intenta de nuevo en unos minutos.";
+
+  return [
+    {
+      key: getRateLimitKey([mode, "ip", ip]),
+      limit,
+      windowMs: PASSWORD_RESET_RATE_LIMIT_WINDOW_MS,
+      message
+    },
+    {
+      key: getRateLimitKey([mode, "email", normalizedEmail]),
+      limit,
+      windowMs: PASSWORD_RESET_RATE_LIMIT_WINDOW_MS,
+      message
+    }
+  ];
+}
+
 const ALLOWED_CORS_ORIGINS = CORS_ORIGIN
   ? parseAllowedOrigins(CORS_ORIGIN)
   : IS_PROD
@@ -108,6 +204,10 @@ function assertRequiredConfig() {
     missing.push("SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY");
   }
 
+  if (!SUPABASE_PROJECT_REF) {
+    missing.push("SUPABASE_PROJECT_REF or a valid SUPABASE_URL");
+  }
+
   if (!JWT_SECRET) {
     missing.push("JWT_SECRET");
   }
@@ -123,6 +223,10 @@ function assertRequiredConfig() {
   if (missing.length > 0) {
     console.error(`[CONFIG ERROR] Missing required environment variables: ${missing.join(", ")}`);
     process.exit(1);
+  }
+
+  if (process.env.SUPABASE_PROJECT_REF && SUPABASE_URL_PROJECT_REF && SUPABASE_PROJECT_REF !== SUPABASE_URL_PROJECT_REF) {
+    console.warn(`[CONFIG WARN] SUPABASE_PROJECT_REF (${SUPABASE_PROJECT_REF}) does not match SUPABASE_URL project ref (${SUPABASE_URL_PROJECT_REF}). Password reset emails may call the wrong Edge Function project.`);
   }
 
   if (IS_PROD && JWT_SECRET.length < 32) {
@@ -449,6 +553,276 @@ function nameFromEmail(email) {
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+function formatMoneyValue(amount, currency) {
+  const numeric = Number.isFinite(Number(amount)) ? Number(amount) : 0;
+  const normalizedCurrency = normalizeCurrency(currency, DEFAULT_SUBSCRIPTION_CURRENCY);
+  try {
+    return new Intl.NumberFormat("es-DO", {
+      style: "currency",
+      currency: normalizedCurrency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(numeric);
+  } catch (_error) {
+    return `${round2(numeric).toFixed(2)} ${normalizedCurrency}`;
+  }
+}
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatDateLabel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "-";
+  }
+
+  const parsed = raw.includes("T") ? new Date(raw) : new Date(`${raw}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return raw;
+  }
+
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const year = String(parsed.getFullYear());
+  return `${day}/${month}/${year}`;
+}
+
+async function getTenantName(tenantId) {
+  const { data, error } = await supabase
+    .from("tenants")
+    .select("name")
+    .eq("id", tenantId)
+    .maybeSingle();
+
+  if (error && !["PGRST116", "42P01", "42703"].includes(String(error.code || ""))) {
+    throw error;
+  }
+
+  return String(data?.name || "CrediSync").trim() || "CrediSync";
+}
+
+async function buildPaymentReceiptContext(user, paymentId) {
+  const state = await readStateForUser(user);
+  const payment = (state.payments || []).find((item) => String(item.id) === String(paymentId));
+  if (!payment) {
+    return null;
+  }
+
+  const loan = (state.loans || []).find((item) => String(item.id) === String(payment.loanId));
+  const customer = (state.customers || []).find((item) => String(item.id) === String(payment.customerId));
+  const tenantName = await getTenantName(user.tenantId);
+  const currency = normalizeCurrency(state?.settings?.currency, DEFAULT_SUBSCRIPTION_CURRENCY);
+  const baseAmount = Number.isFinite(Number(payment.baseAmount)) ? Math.max(round2(Number(payment.baseAmount)), 0) : Math.max(round2(Number(payment.amount || 0)), 0);
+  const lateFeeAmount = Number.isFinite(Number(payment.lateFeeAmount)) ? Math.max(round2(Number(payment.lateFeeAmount)), 0) : Math.max(round2(Number(payment.amount || 0) - baseAmount), 0);
+  const totalPaidToDate = loan ? Math.max(round2(Number(loan.paidAmount || 0)), 0) : baseAmount;
+  const outstandingBase = loan ? loanOutstanding(loan) : 0;
+  const nextDueDate = loan ? loanNextDueDate(loan) : null;
+  const installmentProgress = paymentInstallmentProgress(loan, state.payments || [], payment.id);
+  const customerDisplayId = String(customer?.id || payment.customerId || "-").trim() || "-";
+  const paymentMethodLabel = ({
+    transfer: "Transferencia bancaria",
+    cash: "Efectivo",
+    card: "Tarjeta",
+    check: "Cheque"
+  })[String(payment.method || "").trim().toLowerCase()] || String(payment.method || "-");
+
+  return {
+    payment,
+    loan,
+    customer,
+    tenantName,
+    currency,
+    baseAmount,
+    lateFeeAmount,
+    totalAmount: round2(Number(payment.amount || 0)),
+    totalPaidToDate,
+    outstandingBase,
+    nextDueDate,
+    installmentNumber: installmentProgress.installmentNumber,
+    installmentProgressLabel: installmentProgress.label,
+    customerDisplayId,
+    paymentMethodLabel
+  };
+}
+
+function buildPaymentReceiptEmailHtml(receiptContext) {
+  const customerName = escapeHtml(receiptContext?.customer?.name || "Cliente");
+  const tenantName = escapeHtml(receiptContext?.tenantName || "CrediSync");
+  const paymentId = escapeHtml(receiptContext?.payment?.id || "-");
+  const loanId = escapeHtml(receiptContext?.loan?.id || receiptContext?.payment?.loanId || "-");
+  const paymentDate = escapeHtml(formatDateLabel(receiptContext?.payment?.date || ""));
+
+  return `
+<html>
+  <body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
+    <table role="presentation" style="width:100%;border-collapse:collapse;">
+      <tr>
+        <td style="padding:28px 16px;">
+          <table role="presentation" style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+            <tr>
+              <td style="padding:24px 28px;background:#0f172a;color:#ffffff;">
+                <h1 style="margin:0;font-size:20px;">Comprobante de pago PDF</h1>
+                <p style="margin:8px 0 0 0;opacity:.85;font-size:13px;">${tenantName}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 28px;">
+                <p style="margin:0 0 14px 0;font-size:14px;">Hola ${customerName},</p>
+                <p style="margin:0 0 20px 0;font-size:14px;line-height:1.6;">Adjuntamos tu comprobante de pago correspondiente al prestamo <strong>${loanId}</strong>.</p>
+                <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;">
+                  <tr><td style="padding:6px 0;color:#6b7280;">ID pago</td><td style="padding:6px 0;text-align:right;"><strong>${paymentId}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Fecha</td><td style="padding:6px 0;text-align:right;"><strong>${paymentDate}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Monto total</td><td style="padding:6px 0;text-align:right;"><strong>${escapeHtml(formatMoneyValue(receiptContext.totalAmount, receiptContext.currency))}</strong></td></tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function generatePaymentReceiptPdfBuffer(receiptContext) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 48 });
+    const chunks = [];
+
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("error", reject);
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+
+    const pageWidth = doc.page.width;
+    const pageHeight = doc.page.height;
+    const margin = 36;
+    const contentWidth = pageWidth - (margin * 2);
+    const customerName = receiptContext?.customer?.name || "Cliente";
+    const customerPhone = receiptContext?.customer?.phone || "-";
+    const loanId = receiptContext?.loan?.id || receiptContext?.payment?.loanId || "-";
+    const paymentDate = formatDateLabel(receiptContext?.payment?.date || "");
+    const nextDueDate = receiptContext?.nextDueDate ? formatDateLabel(receiptContext.nextDueDate.toISOString()) : "Sin vencimiento";
+    const montoOriginal = receiptContext?.loan ? formatMoneyValue(receiptContext.loan.principal, receiptContext.currency) : formatMoneyValue(0, receiptContext.currency);
+    const totalPagado = formatMoneyValue(receiptContext.totalPaidToDate, receiptContext.currency);
+    const saldoPendiente = formatMoneyValue(receiptContext.outstandingBase, receiptContext.currency);
+    const totalPagadoDisplay = formatMoneyValue(receiptContext.totalAmount, receiptContext.currency);
+    const baseAplicadaDisplay = formatMoneyValue(receiptContext.baseAmount, receiptContext.currency);
+    const moraAplicadaDisplay = formatMoneyValue(receiptContext.lateFeeAmount, receiptContext.currency);
+    const cuotaActualDisplay = receiptContext?.installmentProgressLabel || "1/1";
+    const blue = "#2952e3";
+    const blueSoft = "#eef2ff";
+    const ink = "#111827";
+    const muted = "#6b7280";
+    const line = "#e5e7eb";
+    const panel = "#f8fafc";
+    const green = "#0f8a5f";
+    const greenSoft = "#e7f8ee";
+    const innerBottom = pageHeight - 22;
+
+    const drawRoundedCard = (x, y, width, height, fill, stroke = line, radius = 12) => {
+      doc.save();
+      doc.roundedRect(x, y, width, height, radius).fillAndStroke(fill, stroke);
+      doc.restore();
+    };
+
+    const drawSectionTitle = (x, y, icon, title) => {
+      doc.save();
+      doc.fillColor(blue).circle(x + 8, y + 8, 8).fill();
+      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(8).text(icon, x + 5.7, y + 4.1, { width: 6, align: "center" });
+      doc.fillColor(blue).font("Helvetica-Bold").fontSize(9).text(title.toUpperCase(), x + 22, y + 2, { characterSpacing: 1 });
+      doc.restore();
+    };
+
+    const drawLabelValue = (x, y, label, value, width, options = {}) => {
+      doc.font("Helvetica-Bold").fontSize(options.labelSize || 7.5).fillColor(options.labelColor || muted).text(label.toUpperCase(), x, y, { width, align: options.align || "left" });
+      doc.font(options.bold ? "Helvetica-Bold" : "Helvetica").fontSize(options.valueSize || 11).fillColor(options.valueColor || ink).text(value, x, y + 14, { width, align: options.align || "left" });
+    };
+
+    const fitFontSize = (text, maxWidth, maxSize, minSize = 15) => {
+      let size = maxSize;
+      while (size > minSize) {
+        doc.font("Helvetica-Bold").fontSize(size);
+        if (doc.widthOfString(String(text || "")) <= maxWidth) {
+          break;
+        }
+        size -= 1;
+      }
+      return size;
+    };
+
+    drawRoundedCard(8, 8, pageWidth - 16, pageHeight - 16, "#f5f7fb", "#edf1f7", 0);
+    drawRoundedCard(margin, 30, contentWidth, innerBottom - 22, "#ffffff", line, 14);
+
+    const headerTop = 42;
+    const leftX = margin + 22;
+    const headerMidX = margin + 292;
+    const rightX = headerMidX + 14;
+    const rightWidth = contentWidth - (rightX - margin);
+
+    doc.save();
+    doc.roundedRect(leftX, headerTop + 6, 38, 38, 12).fill(blue);
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(15).text("L", leftX + 14, headerTop + 17, { width: 10, align: "center" });
+    doc.restore();
+
+    doc.font("Helvetica-Bold").fontSize(27).fillColor(blue).text("CREDISYNC", leftX + 50, headerTop + 6, { width: 214, height: 30, align: "left" });
+    doc.font("Helvetica-Bold").fontSize(7).fillColor(muted).text("POWERED BY CREDISYNC", leftX, headerTop + 60, { width: 210, characterSpacing: 1.2, align: "left" });
+
+    doc.font("Helvetica-Bold").fontSize(16).fillColor(ink).text("COMPROBANTE DE\nPAGO", rightX, headerTop + 6, { width: rightWidth, lineGap: 4, align: "left" });
+    doc.font("Helvetica").fontSize(8.4).fillColor(muted).text(`Recibo N.: ${receiptContext?.payment?.id || "-"}`, rightX, headerTop + 60, { width: rightWidth, align: "left" });
+    doc.text(`Fecha: ${paymentDate}`, rightX, headerTop + 78, { width: rightWidth, align: "left" });
+
+    drawRoundedCard(rightX, headerTop + 110, 176, 22, greenSoft, greenSoft, 11);
+    doc.fillColor(green).font("Helvetica-Bold").fontSize(8).text("ESTADO: PAGADO", rightX + 28, headerTop + 117, { width: 120, characterSpacing: 0.55, align: "left" });
+    doc.circle(rightX + 14, headerTop + 115, 4).fill(green);
+
+    doc.strokeColor(line).lineWidth(1).moveTo(margin, 202).lineTo(margin + contentWidth, 202).stroke();
+
+    drawSectionTitle(margin, 218, "C", "Informacion del cliente");
+    drawRoundedCard(margin, 236, contentWidth, 62, panel, line, 8);
+    drawLabelValue(margin + 16, 252, "Nombre completo", customerName, 184, { valueSize: 10.8 });
+    drawLabelValue(margin + 206, 252, "ID cliente", receiptContext.customerDisplayId, 150, { valueSize: 10.6 });
+    drawLabelValue(margin + 360, 252, "Telefono", customerPhone, 130, { bold: true, valueSize: 10.6 });
+
+    drawSectionTitle(margin, 316, "D", "Detalles del pago");
+    drawRoundedCard(margin, 334, contentWidth, 28, "#e9efff", "#e9efff", 8);
+    drawLabelValue(margin + 16, 342, "ID prestamo", loanId, 100, { labelColor: blue, valueSize: 0.1, valueColor: blue });
+    drawLabelValue(margin + 126, 342, "Fecha de pago", paymentDate, 110, { labelColor: blue, valueSize: 0.1, valueColor: blue });
+    drawLabelValue(margin + 252, 342, "Metodo de pago", receiptContext.paymentMethodLabel, 150, { labelColor: blue, valueSize: 0.1, valueColor: blue });
+    drawLabelValue(margin + 418, 342, "Monto pagado", totalPagadoDisplay, 92, { labelColor: blue, valueSize: 0.1, valueColor: blue, align: "right" });
+
+    doc.font("Helvetica").fontSize(10.2).fillColor(ink).text(loanId, margin + 16, 372, { width: 100, align: "left" });
+    doc.text(paymentDate, margin + 126, 372, { width: 110, align: "left" });
+    doc.text(receiptContext.paymentMethodLabel, margin + 252, 372, { width: 150, align: "left" });
+    doc.font("Helvetica-Bold").text(totalPagadoDisplay, margin + 418, 372, { width: 92, align: "right" });
+
+    drawSectionTitle(margin, 410, "P", "Proximo vencimiento");
+    drawRoundedCard(margin, 428, 214, 88, blueSoft, "#dbe5ff", 10);
+    drawLabelValue(margin + 16, 444, "Fecha limite", nextDueDate, 140, { valueColor: blue, valueSize: 18, bold: true });
+    doc.font("Helvetica-Oblique").fontSize(7.8).fillColor(blue).text("Evite cargos por mora pagando antes de esta fecha.", margin + 16, 492, { width: 176 });
+
+    drawRoundedCard(margin + 234, 428, 278, 146, panel, line, 10);
+    drawLabelValue(margin + 252, 444, "Monto original", montoOriginal, 160, { valueSize: 10.8, bold: true });
+    drawLabelValue(margin + 252, 476, "Cuota actual", cuotaActualDisplay, 160, { valueSize: 12, valueColor: blue, bold: true });
+    drawLabelValue(margin + 252, 508, "Mora aplicada", moraAplicadaDisplay, 160, { valueSize: 10.8, bold: true });
+    drawLabelValue(margin + 252, 540, "Total pagado a la fecha", totalPagado, 160, { valueSize: 10.4, valueColor: green, bold: true });
+    doc.strokeColor(line).lineWidth(1).moveTo(margin + 252, 562).lineTo(margin + 492, 562).stroke();
+    doc.font("Helvetica-Bold").fontSize(9.5).fillColor(ink).text("SALDO PENDIENTE", margin + 252, 574, { width: 120 });
+    doc.font("Helvetica-Bold").fontSize(16).text(saldoPendiente, margin + 352, 571, { width: 140, align: "right" });
+
+    doc.strokeColor(line).lineWidth(1).moveTo(margin, 604).lineTo(margin + contentWidth, 604).stroke();
+    doc.font("Helvetica-Bold").fontSize(8).fillColor(muted).text("2026 CREDISYNC ALL RIGHTS RESERVED.", margin, 618, { width: 220, align: "left" });
+
+    doc.end();
+  });
 }
 
 function normalizeRole(value, fallback) {
@@ -980,6 +1354,203 @@ function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
 
+const PAYMENT_META_MARKER = "__CSMETA__:";
+
+function decodePaymentMeta(storedNote) {
+  const raw = String(storedNote || "");
+  const markerIndex = raw.lastIndexOf(PAYMENT_META_MARKER);
+  if (markerIndex < 0) {
+    return { note: raw, meta: null };
+  }
+
+  const encoded = raw.slice(markerIndex + PAYMENT_META_MARKER.length).trim();
+  if (!encoded) {
+    return { note: raw, meta: null };
+  }
+
+  try {
+    const decoded = Buffer.from(encoded, "base64").toString("utf8");
+    const parsed = JSON.parse(decoded);
+    if (!parsed || typeof parsed !== "object" || Number(parsed.v) !== 1) {
+      return { note: raw, meta: null };
+    }
+
+    return {
+      note: raw.slice(0, markerIndex).trimEnd(),
+      meta: parsed
+    };
+  } catch (_error) {
+    return { note: raw, meta: null };
+  }
+}
+
+function encodePaymentMeta(note, meta) {
+  const cleanNote = String(note || "").trim();
+  if (!meta || typeof meta !== "object") {
+    return cleanNote;
+  }
+
+  const payload = Buffer.from(JSON.stringify(meta), "utf8").toString("base64");
+  return cleanNote ? `${cleanNote}\n${PAYMENT_META_MARKER}${payload}` : `${PAYMENT_META_MARKER}${payload}`;
+}
+
+function paymentMetaSnapshot(meta) {
+  if (!meta || typeof meta !== "object") {
+    return null;
+  }
+
+  const carryAfter = Number(meta?.penalty?.carryAfter);
+  const episodeNumberAfter = Number(meta?.penalty?.episodeNumberAfter);
+  const episodeLateFeePaidAfter = Number(meta?.penalty?.episodeLateFeePaidAfter);
+  if (!Number.isFinite(carryAfter) || !Number.isFinite(episodeNumberAfter) || !Number.isFinite(episodeLateFeePaidAfter)) {
+    return null;
+  }
+
+  return {
+    carryAfter: Math.max(round2(carryAfter), 0),
+    episodeNumberAfter: Math.max(Math.round(episodeNumberAfter), 1),
+    episodeLateFeePaidAfter: Math.max(round2(episodeLateFeePaidAfter), 0),
+    baseAmount: Number.isFinite(Number(meta?.alloc?.baseAmount)) ? Math.max(round2(Number(meta.alloc.baseAmount)), 0) : null,
+    lateFeeAmount: Number.isFinite(Number(meta?.alloc?.lateFeeAmount)) ? Math.max(round2(Number(meta.alloc.lateFeeAmount)), 0) : null
+  };
+}
+
+function loanInstallmentNumber(loan) {
+  const installment = loanInstallment(loan);
+  const termMonths = Math.max(Number(loan?.termMonths || 0), 1);
+  if (!Number.isFinite(installment) || installment <= 0) {
+    return 1;
+  }
+
+  const paidInstallments = Math.min(termMonths, Math.floor((Number(loan?.paidAmount || 0) + 0.00001) / installment));
+  return Math.max(1, Math.min(termMonths, paidInstallments + 1));
+}
+
+function sortPaymentsChronologically(payments) {
+  return [...(payments || [])].sort((a, b) => {
+    const leftDate = toDate(a?.date || "");
+    const rightDate = toDate(b?.date || "");
+    const leftTime = Number.isNaN(leftDate.getTime()) ? 0 : leftDate.getTime();
+    const rightTime = Number.isNaN(rightDate.getTime()) ? 0 : rightDate.getTime();
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+
+    const leftCreated = new Date(a?.created_at || a?.createdAt || 0).getTime() || 0;
+    const rightCreated = new Date(b?.created_at || b?.createdAt || 0).getTime() || 0;
+    if (leftCreated !== rightCreated) {
+      return leftCreated - rightCreated;
+    }
+
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  });
+}
+
+function latestPenaltySnapshotFromPayments(payments) {
+  const ordered = sortPaymentsChronologically(payments);
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const { meta } = decodePaymentMeta(ordered[index]?.note || "");
+    const snapshot = paymentMetaSnapshot(meta);
+    if (snapshot) {
+      return snapshot;
+    }
+  }
+
+  return null;
+}
+
+function legacyLateFeePaidFromPayments(loan, payments) {
+  const paidCash = round2((payments || []).reduce((acc, payment) => acc + Number(payment?.amount || 0), 0));
+  return Math.max(round2(paidCash - Number(loan?.paidAmount || 0)), 0);
+}
+
+function loanPenaltySnapshotAtDate(loan, settings, payments, referenceDate = new Date()) {
+  const overdueDays = daysOverdueAtDate(loan, Number(settings?.graceDays) || 0, referenceDate);
+  const installment = loanInstallment(loan);
+  const outstanding = loanOutstanding(loan);
+  const penaltyBase = Math.max(round2(Math.min(installment, outstanding)), 0);
+  const dailyRate = Math.max(Number(settings?.latePenaltyRate) || 0, 0) / 100;
+  const currentEpisodeAccrued = overdueDays > 0 && dailyRate > 0 && penaltyBase > 0
+    ? round2(penaltyBase * dailyRate * overdueDays)
+    : 0;
+
+  const snapshot = latestPenaltySnapshotFromPayments(payments);
+  const episodeNumber = loanInstallmentNumber(loan);
+  const carryOutstanding = snapshot ? snapshot.carryAfter : 0;
+  const currentEpisodeLateFeePaid = snapshot
+    ? (snapshot.episodeNumberAfter === episodeNumber ? snapshot.episodeLateFeePaidAfter : 0)
+    : legacyLateFeePaidFromPayments(loan, payments);
+  const currentEpisodeLateFeeOutstanding = Math.max(round2(currentEpisodeAccrued - currentEpisodeLateFeePaid), 0);
+  const lateFeeOutstanding = round2(carryOutstanding + currentEpisodeLateFeeOutstanding);
+
+  return {
+    episodeNumber,
+    overdueDays,
+    penaltyBase,
+    carryOutstanding,
+    currentEpisodeAccrued,
+    currentEpisodeLateFeePaid,
+    currentEpisodeLateFeeOutstanding,
+    lateFeeOutstanding
+  };
+}
+
+function mapPaymentRow(paymentRow) {
+  const parsed = decodePaymentMeta(paymentRow?.note || "");
+  const snapshot = paymentMetaSnapshot(parsed.meta);
+
+  return {
+    id: paymentRow.id,
+    tenantId: paymentRow.tenant_id,
+    loanId: paymentRow.loan_id,
+    customerId: paymentRow.customer_id,
+    date: paymentRow.date,
+    amount: Number(paymentRow.amount || 0),
+    method: paymentRow.method,
+    note: parsed.note || "",
+    baseAmount: snapshot ? snapshot.baseAmount : null,
+    lateFeeAmount: snapshot ? snapshot.lateFeeAmount : null,
+    lateFeeCarryAfter: snapshot ? snapshot.carryAfter : null,
+    lateFeeEpisodeNumberAfter: snapshot ? snapshot.episodeNumberAfter : null,
+    lateFeeEpisodeLatePaidAfter: snapshot ? snapshot.episodeLateFeePaidAfter : null
+  };
+}
+
+function paymentInstallmentProgress(loan, payments, targetPaymentId) {
+  if (!loan) {
+    return { installmentNumber: 1, label: "1/1" };
+  }
+
+  const installment = loanInstallment(loan);
+  const termMonths = Math.max(Number(loan.termMonths || 0), 1);
+  if (!Number.isFinite(installment) || installment <= 0) {
+    return { installmentNumber: 1, label: `1/${termMonths}` };
+  }
+
+  const orderedPayments = sortPaymentsChronologically((payments || []).filter((item) => String(item.loanId) === String(loan.id)));
+  let basePaidBefore = 0;
+  let targetPayment = null;
+
+  for (const payment of orderedPayments) {
+    if (String(payment.id) === String(targetPaymentId)) {
+      targetPayment = payment;
+      break;
+    }
+    basePaidBefore += Math.max(Number(payment.baseAmount || 0), 0);
+  }
+
+  if (!targetPayment) {
+    const fallbackNumber = loanInstallmentNumber(loan);
+    return { installmentNumber: fallbackNumber, label: `${fallbackNumber}/${termMonths}` };
+  }
+
+  const installmentNumber = Math.max(1, Math.min(termMonths, Math.floor((basePaidBefore + 0.00001) / installment) + 1));
+  return {
+    installmentNumber,
+    label: `${installmentNumber}/${termMonths}`
+  };
+}
+
 function toDate(value) {
   const raw = String(value || "");
   return raw.includes("T") ? new Date(raw) : new Date(`${raw}T00:00:00`);
@@ -1024,14 +1595,43 @@ function loanNextDueDate(loan) {
 }
 
 function daysOverdue(loan, graceDays) {
+  return daysOverdueAtDate(loan, graceDays, new Date());
+}
+
+function daysOverdueAtDate(loan, graceDays, referenceDate) {
   const dueDate = loanNextDueDate(loan);
   if (!dueDate) {
     return 0;
   }
 
-  const today = startOfDay(new Date());
-  const diff = Math.floor((today - dueDate) / 86400000);
-  return Math.max(0, diff - graceDays);
+  const day = startOfDay(referenceDate instanceof Date ? referenceDate : new Date(referenceDate || Date.now()));
+  const diff = Math.floor((day - dueDate) / 86400000);
+  const grace = Math.max(Number(graceDays) || 0, 0);
+  if (diff <= grace) {
+    return 0;
+  }
+  return Math.max(0, diff);
+}
+
+function loanLateFeeAccrued(loan, settings, referenceDate = new Date()) {
+  const dailyRate = Math.max(Number(settings?.latePenaltyRate) || 0, 0) / 100;
+  if (!loan || dailyRate <= 0) {
+    return 0;
+  }
+
+  const overdueDays = daysOverdueAtDate(loan, Number(settings?.graceDays) || 0, referenceDate);
+  if (overdueDays <= 0) {
+    return 0;
+  }
+
+  const installment = loanInstallment(loan);
+  const outstanding = loanOutstanding(loan);
+  const penaltyBase = Math.max(round2(Math.min(installment, outstanding)), 0);
+  if (penaltyBase <= 0) {
+    return 0;
+  }
+
+  return round2(penaltyBase * dailyRate * overdueDays);
 }
 
 function refreshLoanStatuses(state) {
@@ -2864,16 +3464,7 @@ async function readStateForTenant(tenantId) {
       paidAmount: Number(loan.paid_amount || 0),
       status: loan.status || "active"
     })),
-    payments: (paymentsResult.data || []).map((payment) => ({
-      id: payment.id,
-      tenantId: payment.tenant_id,
-      loanId: payment.loan_id,
-      customerId: payment.customer_id,
-      date: payment.date,
-      amount: Number(payment.amount || 0),
-      method: payment.method,
-      note: payment.note || ""
-    })),
+    payments: (paymentsResult.data || []).map((payment) => mapPaymentRow(payment)),
     paymentPromises: (promisesResult.data || []).map((promise) => ({
       id: promise.id,
       tenantId: promise.tenant_id,
@@ -3260,6 +3851,59 @@ app.post("/api/auth/logout", (req, res) => {
   res.status(204).end();
 });
 
+app.get("/api/auth/supabase-client-config", (req, res) => {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(500).json({
+      message: "Supabase Auth no esta configurado para recuperacion de contrasena."
+    });
+  }
+
+  return res.json({
+    supabaseUrl: SUPABASE_URL,
+    supabaseAnonKey: SUPABASE_ANON_KEY
+  });
+});
+
+app.post("/api/auth/change-password", requireAuth, async (req, res, next) => {
+  try {
+    const currentPassword = String(req.body.currentPassword || "").trim();
+    const newPassword = String(req.body.newPassword || "").trim();
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: "La contrasena actual y la nueva contrasena son obligatorias" });
+    }
+
+    if (newPassword.length < PASSWORD_CHANGE_MIN_LENGTH) {
+      return res.status(400).json({ message: `La nueva contrasena debe tener al menos ${PASSWORD_CHANGE_MIN_LENGTH} caracteres` });
+    }
+
+    if (!req.user?.email || !req.user?.id) {
+      return res.status(401).json({ message: "Sesion invalida. Inicia sesion nuevamente." });
+    }
+
+    const { data: authData, error: authError } = await supabasePublic.auth.signInWithPassword({
+      email: String(req.user.email).trim().toLowerCase(),
+      password: currentPassword
+    });
+
+    if (authError || !authData?.user) {
+      return res.status(401).json({ message: "La contrasena actual no es correcta" });
+    }
+
+    const { error: updateError } = await supabase.auth.admin.updateUserById(req.user.id, {
+      password: newPassword
+    });
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    return res.status(200).json({ message: "Contrasena actualizada correctamente" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 // Google OAuth redirect endpoint
 app.get("/api/auth/google", (req, res) => {
   // For staging: redirect to Google OAuth
@@ -3462,6 +4106,213 @@ app.post("/api/auth/biometric", async (req, res, next) => {
     res.json({ user: sanitizeUser(appUser) });
   } catch (error) {
     console.error('Biometric auth error:', error);
+    next(error);
+  }
+});
+
+// Request password reset - sends 6-digit code via email
+app.post("/api/auth/request-password-reset", async (req, res, next) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email es requerido' });
+    }
+
+    const rateLimit = enforcePasswordResetRateLimit(req, buildPasswordResetLimitScopes(req, email, "request"));
+    if (!rateLimit.allowed) {
+      return res.status(429).json({ message: rateLimit.message, retryAfterSeconds: rateLimit.retryAfterSeconds });
+    }
+
+    // Find user by email
+    const authUser = await findAuthUserByEmail(email);
+
+    if (!authUser) {
+      // Don't reveal if user exists or not for security
+      return res.status(200).json({ message: 'Si el correo existe, recibirás un código de verificación' });
+    }
+
+    // Generate 6-digit code
+    const code = crypto.randomInt(100000, 1000000).toString();
+
+    // Store code in Supabase with expiration (15 minutes)
+    const expiresAt = new Date(Date.now() + PASSWORD_RESET_CODE_TTL_MS).toISOString();
+
+    await supabase
+      .from('password_reset_codes')
+      .update({ used: true })
+      .eq('email', email)
+      .eq('used', false);
+
+    const { error: insertError } = await supabase
+      .from('password_reset_codes')
+      .insert([{
+        email,
+        code: code,
+        expires_at: expiresAt,
+        used: false,
+        user_id: authUser.id
+      }]);
+
+    if (insertError) {
+      console.error('Error storing reset code:', insertError);
+      return res.status(500).json({ message: 'Error generando código de verificación' });
+    }
+
+    // Send email via Supabase Edge Function
+    const edgeFunctionUrl = `https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/send-password-reset-email`;
+
+    // Get app URL for reset link
+    const appUrl = APP_PUBLIC_URL || 'https://credisync-727b6-staging.web.app';
+    const resetUrl = `${appUrl}/reset-password-code?email=${encodeURIComponent(email)}&code=${code}`;
+
+    let emailSent = false;
+
+    try {
+      const emailResponse = await fetch(edgeFunctionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Prefer': 'throw-if-no-key'
+        },
+        body: JSON.stringify({
+          email,
+          code,
+          resetUrl
+        })
+      });
+
+      const emailResult = await emailResponse.json();
+
+      if (!emailResponse.ok) {
+        console.error('Error sending email via Edge Function:', emailResult);
+        console.log(`Password reset code for ${email}: ${code} (email failed to send)`);
+      } else {
+        emailSent = true;
+        console.log(`Password reset email sent to ${email} via SendGrid.`);
+      }
+    } catch (emailError) {
+      console.error('Failed to call Edge Function:', emailError.message);
+      console.log(`Password reset code for ${email}: ${code} (email failed to send)`);
+    }
+
+    if (!emailSent) {
+      await supabase
+        .from('password_reset_codes')
+        .update({ used: true })
+        .eq('email', email)
+        .eq('code', code);
+
+      return res.status(503).json({
+        message: 'No se pudo enviar el correo de recuperacion. Verifica la configuracion de email o contacta soporte.'
+      });
+    }
+
+    res.status(200).json({
+      message: 'Código generado. Revisa tu correo electrónico.',
+      // Don't send code in production response
+      code: IS_PROD ? undefined : code
+    });
+  } catch (error) {
+    console.error('Password reset request error:', error);
+    next(error);
+  }
+});
+
+// Verify password reset code
+app.post("/api/auth/verify-password-reset-code", async (req, res, next) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const code = String(req.body.code || "").trim();
+
+    if (!email || !code) {
+      return res.status(400).json({ message: 'Email y código son requeridos' });
+    }
+
+    const rateLimit = enforcePasswordResetRateLimit(req, buildPasswordResetLimitScopes(req, email, "verify"));
+    if (!rateLimit.allowed) {
+      return res.status(429).json({ message: rateLimit.message, retryAfterSeconds: rateLimit.retryAfterSeconds });
+    }
+
+    // Find valid code
+    const { data, error } = await supabase
+      .from('password_reset_codes')
+      .select('*')
+      .eq('email', email)
+      .eq('code', code)
+      .eq('used', false)
+      .gt('expires_at', new Date().toISOString())
+      .single();
+
+    if (error || !data) {
+      return res.status(400).json({ message: 'Código inválido o expirado' });
+    }
+
+    res.status(200).json({ message: 'Código verificado', email: data.email });
+  } catch (error) {
+    console.error('Verify reset code error:', error);
+    next(error);
+  }
+});
+
+// Reset password with code
+app.post("/api/auth/reset-password", async (req, res, next) => {
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const code = String(req.body.code || "").trim();
+    const password = String(req.body.password || "").trim();
+
+    if (!email || !code || !password) {
+      return res.status(400).json({ message: 'Todos los campos son requeridos' });
+    }
+
+    if (password.length < PASSWORD_CHANGE_MIN_LENGTH) {
+      return res.status(400).json({ message: `La contrasena debe tener al menos ${PASSWORD_CHANGE_MIN_LENGTH} caracteres` });
+    }
+
+    const rateLimit = enforcePasswordResetRateLimit(req, buildPasswordResetLimitScopes(req, email, "reset"));
+    if (!rateLimit.allowed) {
+      return res.status(429).json({ message: rateLimit.message, retryAfterSeconds: rateLimit.retryAfterSeconds });
+    }
+
+    // Verify code is still valid and unused
+    const { data, error } = await supabase
+      .from('password_reset_codes')
+      .select('*')
+      .eq('email', email)
+      .eq('code', code)
+      .eq('used', false)
+      .gt('expires_at', new Date().toISOString())
+      .single();
+
+    if (error || !data) {
+      return res.status(400).json({ message: 'Codigo invalido o expirado' });
+    }
+
+    // Update password in Supabase Auth
+    const userId = data.user_id || (await findAuthUserByEmail(email))?.id;
+    if (!userId) {
+      return res.status(404).json({ message: 'No se encontro la cuenta asociada a este correo' });
+    }
+
+    const { error: updateError } = await supabase.auth.admin.updateUserById(
+      userId,
+      { password: password }
+    );
+
+    if (updateError) {
+      return res.status(500).json({ message: 'Error actualizando contraseña' });
+    }
+
+    await supabase
+      .from('password_reset_codes')
+      .update({ used: true })
+      .eq('email', email);
+
+    res.status(200).json({ message: 'Contraseña actualizada exitosamente' });
+  } catch (error) {
+    console.error('Reset password error:', error);
     next(error);
   }
 });
@@ -4133,11 +4984,17 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
   try {
     const loanId = String(req.body.loanId || "").trim();
     const date = String(req.body.date || "").trim();
-    const amount = round2(parseNumericInput(req.body.amount, NaN));
+    const rawAmount = round2(parseNumericInput(req.body.amount, NaN));
+    const rawBaseAmount = round2(parseNumericInput(req.body.baseAmount, NaN));
+    const rawLateFeeAmount = round2(parseNumericInput(req.body.lateFeeAmount, NaN));
+    const hasSplitRequest = Number.isFinite(rawBaseAmount) || Number.isFinite(rawLateFeeAmount);
+    let baseRequested = Number.isFinite(rawBaseAmount) ? Math.max(rawBaseAmount, 0) : 0;
+    let lateFeeRequested = Number.isFinite(rawLateFeeAmount) ? Math.max(rawLateFeeAmount, 0) : 0;
+    let amount = hasSplitRequest ? round2(baseRequested + lateFeeRequested) : rawAmount;
     const method = String(req.body.method || "").trim();
     const note = String(req.body.note || "").trim();
 
-    if (!loanId || !date || amount <= 0 || !method) {
+    if (!loanId || !date || !Number.isFinite(amount) || amount <= 0 || !method) {
       return res.status(400).json({ message: "Datos de pago incompletos" });
     }
 
@@ -4178,10 +5035,100 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
       status: loanRow.status || "active"
     };
 
-    const outstanding = loanOutstanding(loan);
-    if (amount > outstanding + 0.01) {
-      return res.status(400).json({ message: "El monto excede el saldo pendiente" });
+    const { data: tenantSettingsRow, error: tenantSettingsError } = await supabase
+      .from("tenant_settings")
+      .select("late_penalty_rate,grace_days")
+      .eq("tenant_id", req.user.tenantId)
+      .maybeSingle();
+
+    if (tenantSettingsError && tenantSettingsError.code !== "PGRST116") {
+      throw tenantSettingsError;
     }
+
+    const loanSettings = {
+      latePenaltyRate: Number(tenantSettingsRow?.late_penalty_rate || 0),
+      graceDays: Number(tenantSettingsRow?.grace_days || 0)
+    };
+
+    const { data: existingPayments, error: existingPaymentsError } = await supabase
+      .from("payments")
+      .select("id,date,amount,note,created_at")
+      .eq("loan_id", loan.id)
+      .eq("tenant_id", req.user.tenantId);
+
+    if (existingPaymentsError) {
+      throw existingPaymentsError;
+    }
+
+    const referenceDate = startOfDay(toDate(date));
+    if (Number.isNaN(referenceDate.getTime())) {
+      return res.status(400).json({ message: "Fecha de pago invalida" });
+    }
+
+    const penaltyBefore = loanPenaltySnapshotAtDate(loan, loanSettings, existingPayments || [], referenceDate);
+    const lateFeeDue = Math.max(round2(penaltyBefore.lateFeeOutstanding), 0);
+
+    const outstanding = loanOutstanding(loan);
+    const totalDue = round2(outstanding + lateFeeDue);
+
+    if (!hasSplitRequest) {
+      baseRequested = Math.min(Math.max(amount, 0), outstanding);
+      lateFeeRequested = round2(Math.max(amount - baseRequested, 0));
+    }
+
+    if (baseRequested > outstanding + 0.01) {
+      return res.status(400).json({ message: `La cuota/base excede el saldo pendiente (${outstanding.toFixed(2)}).` });
+    }
+
+    if (lateFeeRequested > lateFeeDue + 0.01) {
+      return res.status(400).json({ message: `La mora excede el pendiente de mora (${lateFeeDue.toFixed(2)}).` });
+    }
+
+    if (amount > totalDue + 0.01) {
+      return res.status(400).json({
+        message: `El monto excede el saldo total pendiente (${totalDue.toFixed(2)}), incluyendo mora.`
+      });
+    }
+
+    const baseApplied = round2(Math.min(baseRequested, outstanding));
+    const lateFeeAppliedToCarry = round2(Math.min(lateFeeRequested, penaltyBefore.carryOutstanding));
+    const lateFeeAppliedToCurrent = round2(Math.min(lateFeeRequested - lateFeeAppliedToCarry, penaltyBefore.currentEpisodeLateFeeOutstanding));
+    const lateFeeApplied = round2(lateFeeAppliedToCarry + lateFeeAppliedToCurrent);
+    amount = round2(baseApplied + lateFeeApplied);
+
+    if (amount <= 0) {
+      return res.status(400).json({ message: "El pago no tiene monto aplicable" });
+    }
+
+    const targetPaidAmount = round2(Math.min(Number(loan.paidAmount || 0) + baseApplied, loanTotalPayable(loan)));
+    const loanAfterPayment = {
+      ...loan,
+      paidAmount: targetPaidAmount
+    };
+
+    const carryAfterLatePayment = Math.max(round2(penaltyBefore.carryOutstanding - lateFeeAppliedToCarry), 0);
+    const currentEpisodeLateFeePaidAfterPayment = round2(penaltyBefore.currentEpisodeLateFeePaid + lateFeeAppliedToCurrent);
+    const currentEpisodeOutstandingAfterPayment = Math.max(round2(penaltyBefore.currentEpisodeAccrued - currentEpisodeLateFeePaidAfterPayment), 0);
+    const episodeAfter = loanInstallmentNumber(loanAfterPayment);
+    const episodeClosed = episodeAfter !== penaltyBefore.episodeNumber;
+    const lateFeeCarryAfter = episodeClosed
+      ? round2(carryAfterLatePayment + currentEpisodeOutstandingAfterPayment)
+      : carryAfterLatePayment;
+    const lateFeeEpisodeLatePaidAfter = episodeClosed ? 0 : currentEpisodeLateFeePaidAfterPayment;
+
+    const paymentMeta = {
+      v: 1,
+      alloc: {
+        baseAmount: baseApplied,
+        lateFeeAmount: lateFeeApplied
+      },
+      penalty: {
+        carryAfter: lateFeeCarryAfter,
+        episodeNumberAfter: episodeAfter,
+        episodeLateFeePaidAfter: lateFeeEpisodeLatePaidAfter
+      }
+    };
+    const storedNote = encodePaymentMeta(note, paymentMeta);
 
     const payment = {
       id: `PAY-${numericId()}`,
@@ -4191,7 +5138,12 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
       date,
       amount,
       method,
-      note
+      note,
+      baseAmount: baseApplied,
+      lateFeeAmount: lateFeeApplied,
+      lateFeeCarryAfter,
+      lateFeeEpisodeNumberAfter: episodeAfter,
+      lateFeeEpisodeLatePaidAfter
     };
 
     const { error } = await supabase.from("payments").insert([
@@ -4203,7 +5155,7 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
         date: payment.date,
         amount: payment.amount,
         method: payment.method,
-        note: payment.note
+        note: storedNote
       }
     ]);
 
@@ -4223,20 +5175,149 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
     }
 
     const paidAfterInsert = Number((updatedLoan && updatedLoan.paid_amount) || 0);
-    if (Math.abs(paidAfterInsert - loan.paidAmount) < 0.01) {
-      const fallbackPaidAmount = round2(loan.paidAmount + payment.amount);
-      const { error: fallbackError } = await supabase
+    if (Math.abs(paidAfterInsert - targetPaidAmount) > 0.01) {
+      const { error: syncError } = await supabase
         .from("loans")
-        .update({ paid_amount: fallbackPaidAmount })
+        .update({ paid_amount: targetPaidAmount })
         .eq("id", loan.id)
         .eq("tenant_id", req.user.tenantId);
 
-      if (fallbackError) {
-        throw fallbackError;
+      if (syncError) {
+        throw syncError;
       }
     }
 
-    return res.status(201).json({ payment });
+    return res.status(201).json({
+      payment,
+      allocation: {
+        totalDueBefore: totalDue,
+        outstandingBefore: outstanding,
+        lateFeeDueBefore: lateFeeDue,
+        carryBefore: penaltyBefore.carryOutstanding,
+        currentEpisodeLateFeeBefore: penaltyBefore.currentEpisodeLateFeeOutstanding,
+        baseRequested,
+        lateFeeRequested,
+        lateFeeApplied,
+        baseApplied,
+        lateFeeCarryAfter,
+        episodeClosed
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get("/api/payments/:id/receipt.pdf", requireAuth, requireTenantUser, async (req, res, next) => {
+  try {
+    const paymentId = String(req.params.id || "").trim();
+    if (!paymentId) {
+      return res.status(400).json({ message: "Pago invalido" });
+    }
+
+    const receiptContext = await buildPaymentReceiptContext(req.user, paymentId);
+    if (!receiptContext) {
+      return res.status(404).json({ message: "Pago no encontrado" });
+    }
+
+    const pdfBuffer = await generatePaymentReceiptPdfBuffer(receiptContext);
+    const fileName = `comprobante-${paymentId}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    return res.status(200).send(pdfBuffer);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post("/api/payments/:id/send-receipt", requireAuth, requireTenantUser, requireTenantWriteAccess, async (req, res, next) => {
+  try {
+    const paymentId = String(req.params.id || "").trim();
+    if (!paymentId) {
+      return res.status(400).json({ message: "Pago invalido" });
+    }
+
+    if (!HAS_SENDGRID_CONFIG) {
+      return res.status(503).json({
+        message: "El envio de comprobantes no esta configurado. Falta SENDGRID_API_KEY o SENDGRID_FROM_EMAIL."
+      });
+    }
+
+    const receiptContext = await buildPaymentReceiptContext(req.user, paymentId);
+    if (!receiptContext) {
+      return res.status(404).json({ message: "Pago no encontrado" });
+    }
+
+    const customerEmail = String(receiptContext?.customer?.email || "").trim();
+    if (!customerEmail) {
+      return res.status(400).json({ message: "El deudor no tiene un email registrado" });
+    }
+
+    const pdfBuffer = await generatePaymentReceiptPdfBuffer(receiptContext);
+    const fileName = `comprobante-${paymentId}.pdf`;
+    const emailHtml = buildPaymentReceiptEmailHtml(receiptContext);
+    const subject = `Comprobante de pago ${paymentId}`;
+
+    const sendgridResponse = await fetch("https://api.sendgrid.com/v3/mail/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SENDGRID_API_KEY}`
+      },
+      body: JSON.stringify({
+        personalizations: [
+          {
+            to: [{ email: customerEmail }],
+            subject
+          }
+        ],
+        from: {
+          email: SENDGRID_FROM_EMAIL,
+          name: SENDGRID_FROM_NAME
+        },
+        reply_to: SENDGRID_REPLY_TO_EMAIL ? { email: SENDGRID_REPLY_TO_EMAIL } : undefined,
+        content: [
+          {
+            type: "text/html",
+            value: emailHtml
+          }
+        ],
+        attachments: [
+          {
+            content: pdfBuffer.toString("base64"),
+            filename: fileName,
+            type: "application/pdf",
+            disposition: "attachment"
+          }
+        ]
+      })
+    });
+
+    if (!sendgridResponse.ok) {
+      let message = `No se pudo enviar el comprobante (${sendgridResponse.status})`;
+      try {
+        const details = await sendgridResponse.json();
+        const errorText = details?.errors?.[0]?.message || details?.message;
+        if (errorText) {
+          message = errorText;
+        }
+      } catch (_error) {
+        const raw = await sendgridResponse.text();
+        if (raw) {
+          message = raw;
+        }
+      }
+
+      return res.status(502).json({ message });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      sentTo: customerEmail,
+      paymentId,
+      message: "Comprobante enviado al deudor"
+    });
   } catch (error) {
     return next(error);
   }
