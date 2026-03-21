@@ -42,6 +42,9 @@ const APP_PUBLIC_URL = (() => {
   }
   return raw;
 })();
+const DEPLOY_ENV_NAME = String(process.env.DEPLOY_ENV_NAME || "").trim().toLowerCase();
+const EXPECTED_SUPABASE_PROJECT_REF = String(process.env.EXPECTED_SUPABASE_PROJECT_REF || "").trim();
+const EXPECTED_APP_PUBLIC_URL = String(process.env.EXPECTED_APP_PUBLIC_URL || "").trim().replace(/\/$/, "");
 const PUSH_VAPID_PUBLIC_KEY = String(process.env.PUSH_VAPID_PUBLIC_KEY || "").trim();
 const PUSH_VAPID_PRIVATE_KEY = String(process.env.PUSH_VAPID_PRIVATE_KEY || "").trim();
 const PUSH_VAPID_SUBJECT = String(process.env.PUSH_VAPID_SUBJECT || "mailto:soporte@credisync.app").trim();
@@ -195,6 +198,9 @@ const ALLOWED_CORS_ORIGINS = CORS_ORIGIN
 
 function assertRequiredConfig() {
   const missing = [];
+  const normalizedAppPublicUrl = APP_PUBLIC_URL.replace(/\/$/, "");
+  const normalizedExpectedAppPublicUrl = EXPECTED_APP_PUBLIC_URL.replace(/\/$/, "");
+  const actualSupabaseProjectRef = SUPABASE_URL_PROJECT_REF || SUPABASE_PROJECT_REF;
 
   if (!SUPABASE_URL) {
     missing.push("SUPABASE_URL");
@@ -236,6 +242,20 @@ function assertRequiredConfig() {
 
   if (APP_PUBLIC_URL && !isValidHttpUrl(APP_PUBLIC_URL)) {
     console.error("[CONFIG ERROR] APP_PUBLIC_URL must be a valid URL (http/https).");
+    process.exit(1);
+  }
+
+  if (EXPECTED_SUPABASE_PROJECT_REF && actualSupabaseProjectRef && actualSupabaseProjectRef !== EXPECTED_SUPABASE_PROJECT_REF) {
+    console.error(
+      `[CONFIG ERROR] Environment ${DEPLOY_ENV_NAME || "unknown"} expected Supabase project ${EXPECTED_SUPABASE_PROJECT_REF}, but backend is configured for ${actualSupabaseProjectRef}.`
+    );
+    process.exit(1);
+  }
+
+  if (normalizedExpectedAppPublicUrl && normalizedAppPublicUrl && normalizedAppPublicUrl !== normalizedExpectedAppPublicUrl) {
+    console.error(
+      `[CONFIG ERROR] Environment ${DEPLOY_ENV_NAME || "unknown"} expected APP_PUBLIC_URL ${normalizedExpectedAppPublicUrl}, but backend is configured for ${normalizedAppPublicUrl}.`
+    );
     process.exit(1);
   }
 

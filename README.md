@@ -88,6 +88,9 @@ Objetivo: servir frontend y backend bajo un unico dominio para mantener cookies 
 ```env
 APP_PUBLIC_URL=https://tu-dominio-final.com
 CORS_ORIGIN=https://tu-dominio-final.com
+DEPLOY_ENV_NAME=prod
+EXPECTED_SUPABASE_PROJECT_REF=tu-project-ref-produccion
+EXPECTED_APP_PUBLIC_URL=https://tu-dominio-final.com
 ```
 
 2. Configura Firebase Hosting con rewrite a backend:
@@ -158,6 +161,9 @@ SUPABASE_ANON_KEY=...
 JWT_SECRET=...
 APP_PUBLIC_URL=https://tu-proyecto-gcp-staging.web.app
 CORS_ORIGIN=https://tu-proyecto-gcp-staging.web.app
+DEPLOY_ENV_NAME=staging
+EXPECTED_SUPABASE_PROJECT_REF=tu-project-ref-staging
+EXPECTED_APP_PUBLIC_URL=https://tu-proyecto-gcp-staging.web.app
 PUSH_VAPID_PUBLIC_KEY=...
 PUSH_VAPID_PRIVATE_KEY=...
 PUSH_DAILY_SUMMARY_JOB_TOKEN=...
@@ -175,6 +181,7 @@ npm run deploy:staging:backend
 ```
 
 El servicio esperado es `credisync-api-staging`.
+Este comando ahora bloquea el deploy si `.env.staging` apunta al Supabase o URL publica incorrectos.
 
 ### 4. Crear scheduler staging
 
@@ -239,6 +246,8 @@ Authorization: Bearer <PUSH_DAILY_SUMMARY_JOB_TOKEN>
 ```bash
 npm run deploy:backend
 ```
+
+Este comando lee `.env.production` y rechaza el deploy si detecta una URL publica o proyecto Supabase que no correspondan a produccion.
 
 2. Configura variables de produccion en tu entorno local o CI/CD:
 
