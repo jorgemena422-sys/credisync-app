@@ -1,160 +1,395 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatMoney, getRiskLevel } from '../utils/helpers';
+import { loanLateFeeOutstanding, loanOutstanding, loanOutstandingWithPenalty, money, formatDate, loanTotalPayable, loanInstallment, loanNextDueDate, loanMaturityDate, initials, round2 } from '../utils/helpers';
+import { statusTag } from './Dashboard';
 import { useDrawer } from '../context/DrawerContext';
 
-const Loans = () => {
-  const { loans, activeLoans, stats } = useApp();
-  const { openLoanDrawer, openPaymentDrawer } = useDrawer();
-  const [filter, setFilter] = useState('ALL');
-  const [search, setSearch] = useState('');
+export default function Loans() {
+    const { state } = useApp();
+    const { openDrawer } = useDrawer();
+    const [query, setQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
+    const [selectedLoan, setSelectedLoan] = useState(null);
+    const readOnly = ['suspended', 'cancelled'].includes(String(state?.subscription?.status || '').toLowerCase());
 
-  const filteredLoans = loans.filter(loan => {
-    const matchesSearch = loan.customer_name.toLowerCase().includes(search.toLowerCase());
-    const matchesFilter = filter === 'ALL' || loan.status === filter;
-    return matchesSearch && matchesFilter;
-  });
+    const filteredLoans = state.loans.filter(loan => {
+        const customer = state.customers.find(c => c.id === loan.customerId);
+        const haystack = `${loan.id} ${loan.type} ${customer ? customer.name : ''}`.toLowerCase();
+        const matchesQuery = !query || haystack.includes(query.toLowerCase());
+        const matchesStatus = statusFilter === 'all' || loan.status === statusFilter;
+        return matchesQuery && matchesStatus;
+    });
 
-  return (
-    <div className="page-container">
-      {/* Header & Stats */}
-      <div className="page-header">
-        <div className="header-info">
-          <p className="text-muted">Total de Cartera</p>
-          <div className="flex-center">
-            <h2 className="title-lg">{formatMoney(stats?.total_lent || 0)}</h2>
-            <span className="badge-positive ml-3">+{loans.length} activos</span>
-          </div>
-        </div>
-        <button className="btn-primary" onClick={openLoanDrawer}>
-          <span className="material-icons">add</span>
-          Nuevo Préstamo
-        </button>
-      </div>
-
-      {/* Filters */}
-      <div className="filter-bar glass-card">
-        <div className="search-box">
-          <span className="material-icons">search</span>
-          <input 
-            type="text" 
-            placeholder="Buscar por cliente..." 
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-        <div className="filter-tabs">
-          <button 
-            className={`tab ${filter === 'ALL' ? 'active' : ''}`}
-            onClick={() => setFilter('ALL')}
-          >
-            Todos
-          </button>
-          <button 
-            className={`tab ${filter === 'ACTIVE' ? 'active' : ''}`}
-            onClick={() => setFilter('ACTIVE')}
-          >
-            Activos
-          </button>
-          <button 
-            className={`tab ${filter === 'LATE' ? 'active' : ''}`}
-            onClick={() => setFilter('LATE')}
-          >
-            Mora
-          </button>
-        </div>
-      </div>
-
-      {/* Desktop Table */}
-      <div className="glass-card table-responsive hide-mobile">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Cliente</th>
-              <th>Monto</th>
-              <th>Pendiente</th>
-              <th>Progreso</th>
-              <th>Tasa</th>
-              <th>Riesgo</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredLoans.map(loan => (
-              <tr key={loan.id}>
-                <td>
-                  <div className="user-info">
-                    <strong>{loan.customer_name}</strong>
-                    <span>Iniciado: {new Date(loan.created_at).toLocaleDateString()}</span>
-                  </div>
-                </td>
-                <td className="font-bold">{formatMoney(loan.amount)}</td>
-                <td className="text-ruby">{formatMoney(loan.outstanding_balance)}</td>
-                <td>
-                  <div className="progress-group">
-                    <div className="progress-bar">
-                      <div 
-                        className="progress-fill" 
-                        style={{width: `${(loan.paid_installments / loan.term) * 100}%`}}
-                      ></div>
+    return (
+        <section id="view-loans" className="view">
+            <div className="card section-stack">
+                <div className="section-head split">
+                    <h3>Cartera de prestamos</h3>
+                    <div className="topbar-actions">
+                        <p className="muted small">{filteredLoans.length} de {state.loans.length} prestamos</p>
+                        <button className="btn btn-primary" type="button" onClick={() => openDrawer('loan')} disabled={readOnly}>Nuevo prestamo</button>
                     </div>
-                    <span>{loan.paid_installments}/{loan.term} cuotas</span>
-                  </div>
-                </td>
-                <td>{loan.interest_rate}%</td>
-                <td>
-                  <span className={`risk-tag ${getRiskLevel(loan.days_overdue)}`}>
-                    {loan.days_overdue} días
-                  </span>
-                </td>
-                <td>
-                  <button className="icon-btn-sm" onClick={() => openPaymentDrawer(loan.id)}>
-                    <span className="material-icons">payments</span>
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Mobile Grid */}
-      <div className="mobile-grid show-mobile">
-        {filteredLoans.map(loan => (
-          <div key={loan.id} className="mobile-card glass-card">
-            <div className="card-top">
-              <div className="card-user">
-                <strong>{loan.customer_name}</strong>
-                <span className={`risk-dot ${getRiskLevel(loan.days_overdue)}`}></span>
-              </div>
-              <div className="card-amount">
-                {formatMoney(loan.outstanding_balance)}
-              </div>
-            </div>
-            <div className="card-mid">
-              <div className="progress-group">
-                <div className="progress-bar">
-                  <div 
-                    className="progress-fill" 
-                    style={{width: `${(loan.paid_installments / loan.term) * 100}%`}}
-                  ></div>
                 </div>
-                <span>Progreso: {Math.round((loan.paid_installments / loan.term) * 100)}%</span>
-              </div>
+                <div className="toolbar">
+                    <input
+                        type="search"
+                        placeholder="Buscar por ID, tipo o cliente"
+                        value={query}
+                        onChange={e => setQuery(e.target.value)}
+                    />
+                    <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                        <option value="all">Todos</option>
+                        <option value="active">Al dia</option>
+                        <option value="overdue">Atraso</option>
+                        <option value="paid">Saldados</option>
+                    </select>
+                </div>
+                <div className="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Cliente</th>
+                                <th>Tipo</th>
+                                <th>Monto</th>
+                                <th>Saldo</th>
+                                <th>Estado</th>
+                                <th>Accion</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filteredLoans.length > 0 ? (
+                                filteredLoans.map(loan => {
+                                    const customer = state.customers.find(c => c.id === loan.customerId);
+                                    return (
+                                        <tr key={loan.id} className="motion-item">
+                                            <td data-label="ID">{loan.id}</td>
+                                            <td data-label="Cliente">{customer ? customer.name : 'Sin cliente'}</td>
+                                            <td data-label="Tipo">{loan.type}</td>
+                                            <td data-label="Monto">{money(loan.principal)}</td>
+                                            <td data-label="Saldo">{money(loanOutstandingWithPenalty(loan, state))}</td>
+                                            <td data-label="Estado">{statusTag(loan.status, 'loan')}</td>
+                                            <td data-label="Accion">
+                                                <button
+                                                    onClick={() => setSelectedLoan(loan)}
+                                                    className="action-link"
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, font: 'inherit' }}
+                                                >
+                                                    Detalle
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })
+                            ) : (
+                                <tr className="empty-row">
+                                    <td colSpan="7">
+                                        <div className="empty-state">
+                                            <span className="material-symbols-outlined">{query || statusFilter !== 'all' ? 'search_off' : 'add_card'}</span>
+                                            <h4>{query || statusFilter !== 'all' ? 'Sin resultados' : 'Aun no hay prestamos'}</h4>
+                                            <p>{query || statusFilter !== 'all' ? 'Ajusta la busqueda o limpia los filtros para ver resultados.' : 'Registra tu primer prestamo para construir la cartera.'}</p>
+                                            <button className="btn btn-ghost" type="button" onClick={() => {
+                                                if (query || statusFilter !== 'all') {
+                                                    setQuery('');
+                                                    setStatusFilter('all');
+                                                } else {
+                                                    openDrawer('loan');
+                                                }
+                                            }}>
+                                                {query || statusFilter !== 'all' ? 'Limpiar filtros' : 'Crear prestamo'}
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
-            <div className="card-actions">
-              <button 
-                className="btn-card-primary"
-                onClick={() => openPaymentDrawer(loan.id)}
-              >
-                Cobrar Cuota
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
 
-export default Loans;
+            {selectedLoan && (
+                <LoanDetailModal
+                    loan={selectedLoan}
+                    state={state}
+                    customer={state.customers.find(c => c.id === selectedLoan.customerId)}
+                    payments={state.payments.filter(p => p.loanId === selectedLoan.id)}
+                    readOnly={readOnly}
+                    onClose={() => setSelectedLoan(null)}
+                    onRegisterPayment={() => {
+                        setSelectedLoan(null);
+                        openDrawer('payment');
+                    }}
+                />
+            )}
+        </section>
+    );
+}
+
+function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, onRegisterPayment }) {
+    const isInterestOnly = loan.paymentModel === 'interest_only_balloon';
+    const totalPayable = loanTotalPayable(loan);
+    const baseOutstanding = loanOutstanding(loan);
+    const maturityPrincipalDue = isInterestOnly ? Math.max(Number(loan.maturityPrincipalDue || 0), 0) : 0;
+    const principalNotDueYet = isInterestOnly ? Math.max(round2(baseOutstanding - maturityPrincipalDue), 0) : 0;
+    const interestOutstanding = Math.max(Number(loan.interestOutstanding || 0), 0);
+    const interestLateFeeOutstanding = isInterestOnly ? Math.max(Number(loan.interestLateFeeOutstanding || 0), 0) : 0;
+    const principalLateFeeOutstanding = isInterestOnly ? Math.max(Number(loan.principalLateFeeOutstanding || 0), 0) : 0;
+    const lateFeeOutstanding = loanLateFeeOutstanding(loan, state);
+    const outstanding = loanOutstandingWithPenalty(loan, state);
+    const totalDueToday = isInterestOnly
+        ? round2(maturityPrincipalDue + interestOutstanding + lateFeeOutstanding)
+        : outstanding;
+    const installment = loanInstallment(loan);
+    const nextDue = loanNextDueDate(loan);
+    const maturity = loanMaturityDate(loan);
+    const paidInstallments = isInterestOnly
+        ? (() => {
+            const start = new Date(`${loan.startDate}T00:00:00`);
+            const now = new Date();
+            const diffMonths = ((now.getFullYear() - start.getFullYear()) * 12) + (now.getMonth() - start.getMonth()) + 1;
+            return Math.max(Math.min(loan.termMonths, diffMonths), 0);
+        })()
+        : Math.floor(loan.paidAmount / Math.max(installment, 0.01));
+    const progressPercent = isInterestOnly
+        ? (loan.principal > 0 ? ((loan.principal - baseOutstanding) / loan.principal) * 100 : 0)
+        : (loan.termMonths > 0 ? (paidInstallments / loan.termMonths) * 100 : 0);
+    const remainingInstallments = Math.max(loan.termMonths - paidInstallments, 0);
+    const orderedPayments = [...payments].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    return (
+        <div className="modal-overlay loan-detail-overlay" onClick={onClose}>
+            <div className="card loan-detail-modal" onClick={event => event.stopPropagation()}>
+                <div className="loan-detail-head">
+                    <div className="loan-detail-title-block">
+                        <div className="loan-detail-icon">$</div>
+                        <div>
+                            <p className="eyebrow">Credito en seguimiento</p>
+                            <h3>Prestamo #{loan.id}</h3>
+                            <div className="loan-detail-meta-row">
+                                {statusTag(loan.status, 'loan')}
+                                <span className="role-pill role-admin">{loan.type}</span>
+                                <span className="muted small">Inicio {formatDate(loan.startDate)}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="loan-detail-head-actions">
+                        {loan.status !== 'paid' && (
+                            <button type="button" className="btn btn-primary" onClick={onRegisterPayment} disabled={readOnly}>Registrar pago</button>
+                        )}
+                        <button type="button" className="loan-detail-close" onClick={onClose} aria-label="Cerrar detalle">
+                            <span className="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+                </div>
+
+                <section className="loan-detail-hero">
+                    <div className="loan-hero-balance">
+                        <p className="eyebrow">Saldo pendiente total</p>
+                        <h2>{money(outstanding)}</h2>
+                        <div className="loan-detail-meta-row">
+                            <span className="status status-pending">Vence {formatDate(nextDue)}</span>
+                            <span className="muted small">Cierre {formatDate(maturity)}</span>
+                        </div>
+                        {isInterestOnly ? (
+                            <div className="cell-stack" style={{ marginTop: '0.35rem' }}>
+                                <small className="muted">Exigible hoy: {money(totalDueToday)}</small>
+                                <small className="muted">Capital vencido: {money(maturityPrincipalDue)}</small>
+                                <small className="muted">Interes vencido: {money(interestOutstanding)}</small>
+                                <small className="muted">Mora total: {money(lateFeeOutstanding)} (interes: {money(interestLateFeeOutstanding)} · capital: {money(principalLateFeeOutstanding)})</small>
+                                {principalNotDueYet > 0 && <small className="muted">Capital pendiente no vencido: {money(principalNotDueYet)}</small>}
+                            </div>
+                        ) : lateFeeOutstanding > 0 ? (
+                            <p className="muted small">Incluye mora acumulada: {money(lateFeeOutstanding)} · Base: {money(baseOutstanding)}</p>
+                        ) : null}
+                    </div>
+
+                    <div className="loan-hero-progress">
+                        <div className="loan-progress-top">
+                            <span className="small muted">{isInterestOnly ? 'Progreso de capital recuperado' : 'Progreso de recuperacion'}</span>
+                            <strong>{progressPercent.toFixed(0)}%</strong>
+                        </div>
+                        <div className="loan-progress-bar">
+                            <div className="loan-progress-fill" style={{ width: `${Math.min(progressPercent, 100)}%` }} />
+                        </div>
+                        <div className="loan-progress-foot">
+                            <span>{money(loan.paidAmount)} {isInterestOnly ? 'capital recuperado' : 'cobrados'}</span>
+                            <span>{money(totalPayable)} {isInterestOnly ? 'capital original' : 'total'}</span>
+                        </div>
+                    </div>
+                </section>
+
+                <div className="loan-detail-grid">
+                    <div className="loan-detail-column">
+                        <div className="card section-stack loan-detail-panel">
+                            <div className="section-head split">
+                                <h4>Cliente</h4>
+                                <span className="muted small">Ficha principal</span>
+                            </div>
+
+                            {customer ? (
+                                <div className="loan-customer-card">
+                                    <div className="loan-customer-avatar">{initials(customer.name)}</div>
+                                    <div className="cell-stack">
+                                        <strong>{customer.name}</strong>
+                                        <span className="muted small">{customer.email}</span>
+                                        <span className="muted small">{customer.phone}</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="empty-state compact-empty-state">
+                                    <h4>Sin cliente asociado</h4>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="card section-stack loan-detail-panel">
+                            <div className="section-head split">
+                                <h4>Cronograma</h4>
+                                <span className="muted small">Seguimiento</span>
+                            </div>
+
+                            <div className="detail-metrics loan-detail-metrics-tight">
+                                <div className="metric">
+                                    <p>Proximo vencimiento</p>
+                                    <strong>{formatDate(nextDue)}</strong>
+                                </div>
+                                <div className="metric">
+                                    <p>Cierre previsto</p>
+                                    <strong>{formatDate(maturity)}</strong>
+                                </div>
+                                <div className="metric">
+                                    <p>Cuotas cubiertas</p>
+                                    <strong>{paidInstallments} / {loan.termMonths}</strong>
+                                </div>
+                                <div className="metric">
+                                    <p>Restantes</p>
+                                    <strong>{remainingInstallments}</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="loan-detail-column">
+                        <div className="card section-stack loan-detail-panel loan-detail-panel-strong">
+                            <div className="section-head split">
+                                <h4>Resumen financiero</h4>
+                                <span className="muted small">Credito</span>
+                            </div>
+
+                            <div className="loan-financial-grid">
+                                <div className="metric loan-metric-highlight">
+                                    <p>Monto original</p>
+                                    <strong>{money(loan.principal)}</strong>
+                                </div>
+                                <div className="metric loan-metric-highlight">
+                                    <p>{isInterestOnly ? 'Capital pendiente' : 'Total a recuperar'}</p>
+                                    <strong>{money(isInterestOnly ? baseOutstanding : totalPayable)}</strong>
+                                </div>
+                                <div className="metric">
+                                    <p>{isInterestOnly ? 'Interes mensual estimado' : 'Cuota estimada'}</p>
+                                    <strong>{money(installment)}</strong>
+                                </div>
+                                <div className="metric">
+                                    <p>Tasa</p>
+                                    <strong>{loan.interestRate}% {loan.interestRateMode === 'monthly' ? 'mensual' : 'anual'}</strong>
+                                </div>
+                                <div className="metric">
+                                    <p>Plazo</p>
+                                    <strong>{loan.termMonths} meses</strong>
+                                </div>
+                                <div className="metric">
+                                    <p>{isInterestOnly ? 'Capital recuperado' : 'Recuperado'}</p>
+                                    <strong>{money(loan.paidAmount)}</strong>
+                                </div>
+                                {isInterestOnly && (
+                                    <div className="metric">
+                                        <p>Capital vencido</p>
+                                        <strong>{money(maturityPrincipalDue)}</strong>
+                                    </div>
+                                )}
+                                {isInterestOnly && (
+                                    <div className="metric">
+                                        <p>Interes vencido</p>
+                                        <strong>{money(interestOutstanding)}</strong>
+                                    </div>
+                                )}
+                                {isInterestOnly && (
+                                    <div className="metric">
+                                        <p>Mora por interes</p>
+                                        <strong>{money(interestLateFeeOutstanding)}</strong>
+                                    </div>
+                                )}
+                                {isInterestOnly && (
+                                    <div className="metric">
+                                        <p>Mora por capital</p>
+                                        <strong>{money(principalLateFeeOutstanding)}</strong>
+                                    </div>
+                                )}
+                                <div className="metric">
+                                    <p>Mora actual</p>
+                                    <strong>{money(lateFeeOutstanding)}</strong>
+                                </div>
+                                {isInterestOnly && (
+                                    <div className="metric loan-metric-highlight">
+                                        <p>Total exigible hoy</p>
+                                        <strong>{money(totalDueToday)}</strong>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="card section-stack loan-detail-panel">
+                    <div className="section-head split">
+                        <div>
+                            <h4>Historial de pagos</h4>
+                            <p className="muted">Ultimos movimientos registrados para este credito.</p>
+                        </div>
+                        <span className="muted small">{payments.length} registro(s)</span>
+                    </div>
+
+                    <div className="table-wrap loan-payment-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Fecha</th>
+                                    <th>Monto</th>
+                                    <th>Metodo</th>
+                                    <th>Nota</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {orderedPayments.slice(0, 6).map(payment => (
+                                    <tr key={payment.id}>
+                                        <td data-label="Fecha">{formatDate(payment.date)}</td>
+                                        <td data-label="Monto">{money(payment.amount)}</td>
+                                        <td data-label="Metodo">{payment.method}</td>
+                                        <td data-label="Nota">{payment.note || 'Sin nota'}</td>
+                                    </tr>
+                                ))}
+                                {payments.length === 0 && (
+                                    <tr className="empty-row">
+                                        <td colSpan="4">
+                                            <div className="empty-state compact-empty-state loan-payment-empty">
+                                                <span className="material-symbols-outlined">receipt_long</span>
+                                                <h4>Sin pagos registrados</h4>
+                                                <p>Este prestamo aun no tiene movimientos aplicados. Puedes registrar el primer pago desde este mismo detalle.</p>
+                                                <button type="button" className="btn btn-ghost" onClick={onRegisterPayment}>Registrar pago</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {payments.length > 6 && (
+                        <p className="small muted loan-detail-footnote">Se muestran los 6 pagos mas recientes. Quedan {payments.length - 6} registros adicionales.</p>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
