@@ -89,8 +89,10 @@ create table if not exists public.loans (
   customer_id text not null references public.customers(id) on delete cascade,
   type text not null,
   principal numeric(12,2) not null,
+  principal_outstanding numeric(12,2),
   interest_rate numeric(8,2) not null,
   interest_rate_mode text not null default 'annual',
+  payment_model text not null default 'legacy_add_on',
   term_months int not null,
   start_date date not null,
   paid_amount numeric(12,2) not null default 0,
@@ -99,7 +101,8 @@ create table if not exists public.loans (
   constraint loans_status_check check (status in ('active', 'overdue', 'paid')),
   constraint loans_principal_check check (principal > 0),
   constraint loans_term_check check (term_months > 0),
-  constraint loans_rate_mode_check check (interest_rate_mode in ('annual', 'monthly'))
+  constraint loans_rate_mode_check check (interest_rate_mode in ('annual', 'monthly')),
+  constraint loans_payment_model_check check (payment_model in ('legacy_add_on', 'interest_only_balloon'))
 );
 
 create table if not exists public.payments (
@@ -353,6 +356,9 @@ alter table public.tenant_settings add column if not exists currency text not nu
 alter table public.customers add column if not exists tenant_id text;
 alter table public.loans add column if not exists tenant_id text;
 alter table public.loans add column if not exists interest_rate_mode text not null default 'annual';
+alter table public.loans add column if not exists payment_model text not null default 'legacy_add_on';
+alter table public.loans add column if not exists principal_outstanding numeric(12,2);
+update public.loans set principal_outstanding = principal - coalesce(paid_amount, 0) where principal_outstanding is null;
 alter table public.payments add column if not exists tenant_id text;
 alter table public.payment_promises add column if not exists tenant_id text;
 alter table public.collection_notes add column if not exists tenant_id text;
@@ -377,6 +383,19 @@ alter table public.push_subscriptions add column if not exists device_label text
 alter table public.push_subscriptions add column if not exists timezone text not null default 'America/Santo_Domingo';
 alter table public.push_subscriptions add column if not exists enabled boolean not null default true;
 alter table public.push_subscriptions add column if not exists last_seen_at timestamptz;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'loans_payment_model_check'
+      and conrelid = 'public.loans'::regclass
+  ) then
+    alter table public.loans
+      add constraint loans_payment_model_check check (payment_model in ('legacy_add_on', 'interest_only_balloon'));
+  end if;
+end $$;
 alter table public.push_subscriptions add column if not exists updated_at timestamptz not null default now();
 alter table public.push_delivery_logs add column if not exists id text;
 alter table public.push_delivery_logs add column if not exists tenant_id text;
@@ -576,18 +595,21 @@ declare
   next_paid numeric(12,2);
   total_payable numeric(12,2);
   loan_rate_mode text;
+  loan_payment_model text;
 begin
   update public.loans
   set paid_amount = coalesce(paid_amount, 0) + coalesce(new.amount, 0)
   where id = new.loan_id
     and tenant_id = new.tenant_id
-  returning paid_amount, interest_rate_mode
-  into next_paid, loan_rate_mode;
+  returning paid_amount, interest_rate_mode, payment_model
+  into next_paid, loan_rate_mode, loan_payment_model;
 
-  -- Calculate total payable based on interest rate mode
+  -- Calculate total payable based on loan mode
   select
-    case when coalesce(loan_rate_mode, 'annual') = 'monthly'
-      then principal * (1 + (interest_rate / 100) * term_months::numeric)
+    case when coalesce(loan_payment_model, 'legacy_add_on') = 'interest_only_balloon'
+      then principal
+      when coalesce(loan_rate_mode, 'annual') = 'monthly'
+        then principal * (1 + (interest_rate / 100) * term_months::numeric)
       else principal * (1 + (interest_rate / 100) * (term_months::numeric / 12))
     end
   into total_payable

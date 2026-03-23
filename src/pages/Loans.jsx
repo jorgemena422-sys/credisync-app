@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { loanLateFeeOutstanding, loanOutstanding, loanOutstandingWithPenalty, money, formatDate, loanTotalPayable, loanInstallment, loanNextDueDate, loanMaturityDate, initials } from '../utils/helpers';
+import { loanLateFeeOutstanding, loanOutstanding, loanOutstandingWithPenalty, money, formatDate, loanTotalPayable, loanInstallment, loanNextDueDate, loanMaturityDate, initials, round2 } from '../utils/helpers';
 import { statusTag } from './Dashboard';
 import { useDrawer } from '../context/DrawerContext';
 
@@ -39,9 +39,9 @@ export default function Loans() {
                     />
                     <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
                         <option value="all">Todos</option>
-                        <option value="active">Activos</option>
-                        <option value="overdue">Vencidos</option>
-                        <option value="paid">Pagados</option>
+                        <option value="active">Al dia</option>
+                        <option value="overdue">Atraso</option>
+                        <option value="paid">Saldados</option>
                     </select>
                 </div>
                 <div className="table-wrap">
@@ -68,7 +68,7 @@ export default function Loans() {
                                             <td data-label="Tipo">{loan.type}</td>
                                             <td data-label="Monto">{money(loan.principal)}</td>
                                             <td data-label="Saldo">{money(loanOutstandingWithPenalty(loan, state))}</td>
-                                            <td data-label="Estado">{statusTag(loan.status)}</td>
+                                            <td data-label="Estado">{statusTag(loan.status, 'loan')}</td>
                                             <td data-label="Accion">
                                                 <button
                                                     onClick={() => setSelectedLoan(loan)}
@@ -126,15 +126,33 @@ export default function Loans() {
 }
 
 function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, onRegisterPayment }) {
+    const isInterestOnly = loan.paymentModel === 'interest_only_balloon';
     const totalPayable = loanTotalPayable(loan);
     const baseOutstanding = loanOutstanding(loan);
+    const maturityPrincipalDue = isInterestOnly ? Math.max(Number(loan.maturityPrincipalDue || 0), 0) : 0;
+    const principalNotDueYet = isInterestOnly ? Math.max(round2(baseOutstanding - maturityPrincipalDue), 0) : 0;
+    const interestOutstanding = Math.max(Number(loan.interestOutstanding || 0), 0);
+    const interestLateFeeOutstanding = isInterestOnly ? Math.max(Number(loan.interestLateFeeOutstanding || 0), 0) : 0;
+    const principalLateFeeOutstanding = isInterestOnly ? Math.max(Number(loan.principalLateFeeOutstanding || 0), 0) : 0;
     const lateFeeOutstanding = loanLateFeeOutstanding(loan, state);
     const outstanding = loanOutstandingWithPenalty(loan, state);
+    const totalDueToday = isInterestOnly
+        ? round2(maturityPrincipalDue + interestOutstanding + lateFeeOutstanding)
+        : outstanding;
     const installment = loanInstallment(loan);
     const nextDue = loanNextDueDate(loan);
     const maturity = loanMaturityDate(loan);
-    const paidInstallments = Math.floor(loan.paidAmount / installment);
-    const progressPercent = loan.termMonths > 0 ? (paidInstallments / loan.termMonths) * 100 : 0;
+    const paidInstallments = isInterestOnly
+        ? (() => {
+            const start = new Date(`${loan.startDate}T00:00:00`);
+            const now = new Date();
+            const diffMonths = ((now.getFullYear() - start.getFullYear()) * 12) + (now.getMonth() - start.getMonth()) + 1;
+            return Math.max(Math.min(loan.termMonths, diffMonths), 0);
+        })()
+        : Math.floor(loan.paidAmount / Math.max(installment, 0.01));
+    const progressPercent = isInterestOnly
+        ? (loan.principal > 0 ? ((loan.principal - baseOutstanding) / loan.principal) * 100 : 0)
+        : (loan.termMonths > 0 ? (paidInstallments / loan.termMonths) * 100 : 0);
     const remainingInstallments = Math.max(loan.termMonths - paidInstallments, 0);
     const orderedPayments = [...payments].sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -148,7 +166,7 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
                             <p className="eyebrow">Credito en seguimiento</p>
                             <h3>Prestamo #{loan.id}</h3>
                             <div className="loan-detail-meta-row">
-                                {statusTag(loan.status)}
+                                {statusTag(loan.status, 'loan')}
                                 <span className="role-pill role-admin">{loan.type}</span>
                                 <span className="muted small">Inicio {formatDate(loan.startDate)}</span>
                             </div>
@@ -173,22 +191,30 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
                             <span className="status status-pending">Vence {formatDate(nextDue)}</span>
                             <span className="muted small">Cierre {formatDate(maturity)}</span>
                         </div>
-                        {lateFeeOutstanding > 0 && (
+                        {isInterestOnly ? (
+                            <div className="cell-stack" style={{ marginTop: '0.35rem' }}>
+                                <small className="muted">Exigible hoy: {money(totalDueToday)}</small>
+                                <small className="muted">Capital vencido: {money(maturityPrincipalDue)}</small>
+                                <small className="muted">Interes vencido: {money(interestOutstanding)}</small>
+                                <small className="muted">Mora total: {money(lateFeeOutstanding)} (interes: {money(interestLateFeeOutstanding)} · capital: {money(principalLateFeeOutstanding)})</small>
+                                {principalNotDueYet > 0 && <small className="muted">Capital pendiente no vencido: {money(principalNotDueYet)}</small>}
+                            </div>
+                        ) : lateFeeOutstanding > 0 ? (
                             <p className="muted small">Incluye mora acumulada: {money(lateFeeOutstanding)} · Base: {money(baseOutstanding)}</p>
-                        )}
+                        ) : null}
                     </div>
 
                     <div className="loan-hero-progress">
                         <div className="loan-progress-top">
-                            <span className="small muted">Progreso de recuperacion</span>
+                            <span className="small muted">{isInterestOnly ? 'Progreso de capital recuperado' : 'Progreso de recuperacion'}</span>
                             <strong>{progressPercent.toFixed(0)}%</strong>
                         </div>
                         <div className="loan-progress-bar">
                             <div className="loan-progress-fill" style={{ width: `${Math.min(progressPercent, 100)}%` }} />
                         </div>
                         <div className="loan-progress-foot">
-                            <span>{money(loan.paidAmount)} cobrados</span>
-                            <span>{money(totalPayable)} total</span>
+                            <span>{money(loan.paidAmount)} {isInterestOnly ? 'capital recuperado' : 'cobrados'}</span>
+                            <span>{money(totalPayable)} {isInterestOnly ? 'capital original' : 'total'}</span>
                         </div>
                     </div>
                 </section>
@@ -257,11 +283,11 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
                                     <strong>{money(loan.principal)}</strong>
                                 </div>
                                 <div className="metric loan-metric-highlight">
-                                    <p>Total a recuperar</p>
-                                    <strong>{money(totalPayable)}</strong>
+                                    <p>{isInterestOnly ? 'Capital pendiente' : 'Total a recuperar'}</p>
+                                    <strong>{money(isInterestOnly ? baseOutstanding : totalPayable)}</strong>
                                 </div>
                                 <div className="metric">
-                                    <p>Cuota estimada</p>
+                                    <p>{isInterestOnly ? 'Interes mensual estimado' : 'Cuota estimada'}</p>
                                     <strong>{money(installment)}</strong>
                                 </div>
                                 <div className="metric">
@@ -273,13 +299,43 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
                                     <strong>{loan.termMonths} meses</strong>
                                 </div>
                                 <div className="metric">
-                                    <p>Recuperado</p>
+                                    <p>{isInterestOnly ? 'Capital recuperado' : 'Recuperado'}</p>
                                     <strong>{money(loan.paidAmount)}</strong>
                                 </div>
+                                {isInterestOnly && (
+                                    <div className="metric">
+                                        <p>Capital vencido</p>
+                                        <strong>{money(maturityPrincipalDue)}</strong>
+                                    </div>
+                                )}
+                                {isInterestOnly && (
+                                    <div className="metric">
+                                        <p>Interes vencido</p>
+                                        <strong>{money(interestOutstanding)}</strong>
+                                    </div>
+                                )}
+                                {isInterestOnly && (
+                                    <div className="metric">
+                                        <p>Mora por interes</p>
+                                        <strong>{money(interestLateFeeOutstanding)}</strong>
+                                    </div>
+                                )}
+                                {isInterestOnly && (
+                                    <div className="metric">
+                                        <p>Mora por capital</p>
+                                        <strong>{money(principalLateFeeOutstanding)}</strong>
+                                    </div>
+                                )}
                                 <div className="metric">
                                     <p>Mora actual</p>
                                     <strong>{money(lateFeeOutstanding)}</strong>
                                 </div>
+                                {isInterestOnly && (
+                                    <div className="metric loan-metric-highlight">
+                                        <p>Total exigible hoy</p>
+                                        <strong>{money(totalDueToday)}</strong>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>

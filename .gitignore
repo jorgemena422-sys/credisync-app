@@ -5,6 +5,10 @@
 
 node_modules/
 dist/
+dist-prod/
+dist-staging/
+.firebase/
+.vite-cache-local/
 
 firebase-debug.log
 *.local

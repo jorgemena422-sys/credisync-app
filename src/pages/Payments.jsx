@@ -302,7 +302,7 @@ export default function Payments() {
                     />
                     <select value={queueFilter} onChange={(event) => setQueueFilter(event.target.value)}>
                         <option value="all">Todos</option>
-                        <option value="overdue">Vencidos</option>
+                        <option value="overdue">En atraso</option>
                         <option value="today">Vencen hoy</option>
                         <option value="week">Proximos 7 dias</option>
                         <option value="promised">Con promesa pendiente</option>

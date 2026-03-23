@@ -2,19 +2,58 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { money, initials, formatDate, sum, loanOutstanding, customerRiskProfile } from '../utils/helpers';
 import { useDrawer } from '../context/DrawerContext';
+import { useToast } from '../context/ToastContext';
+import { apiRequest } from '../utils/api';
 import { statusTag } from './Dashboard';
 
 export default function Customers() {
-    const { state } = useApp();
+    const { state, bootstrapState } = useApp();
     const { openDrawer } = useDrawer();
+    const { showToast } = useToast();
     const [query, setQuery] = useState('');
     const [selectedCustomer, setSelectedCustomer] = useState(null);
+    const [deletingCustomerId, setDeletingCustomerId] = useState('');
     const readOnly = ['suspended', 'cancelled'].includes(String(state?.subscription?.status || '').toLowerCase());
 
     const filteredCustomers = state.customers.filter(customer => {
         const haystack = `${customer.name} ${customer.email} ${customer.phone}`.toLowerCase();
         return !query || haystack.includes(query.toLowerCase());
     });
+
+    const handleDeleteCustomer = async (customer) => {
+        if (!customer || readOnly || deletingCustomerId) {
+            return;
+        }
+
+        const customerLoans = state.loans.filter((loan) => loan.customerId === customer.id);
+        const activeLoans = customerLoans.filter((loan) => loan.status === 'active' || loan.status === 'overdue').length;
+        const warning = [
+            `Vas a eliminar al cliente ${customer.name}.`,
+            'Esta accion eliminara tambien prestamos, pagos y promesas asociados a este cliente.',
+            activeLoans > 0 ? `Tiene ${activeLoans} prestamo(s) activo(s).` : null,
+            'Esta accion no se puede deshacer.'
+        ].filter(Boolean).join('\n\n');
+
+        if (!window.confirm(warning)) {
+            return;
+        }
+
+        try {
+            setDeletingCustomerId(customer.id);
+            await apiRequest(`/customers/${customer.id}`, {
+                method: 'DELETE'
+            });
+            if (selectedCustomer?.id === customer.id) {
+                setSelectedCustomer(null);
+            }
+            await bootstrapState();
+            showToast('Cliente eliminado exitosamente');
+        } catch (error) {
+            showToast(error.message || 'No se pudo eliminar el cliente');
+        } finally {
+            setDeletingCustomerId('');
+        }
+    };
 
     return (
         <section id="view-customers" className="view">
@@ -31,8 +70,8 @@ export default function Customers() {
                         onChange={e => setQuery(e.target.value)}
                     />
                 </div>
-                <div className="table-wrap">
-                    <table>
+                <div className="table-wrap customers-table-wrap">
+                    <table className="customers-table">
                         <thead>
                             <tr>
                                 <th>Cliente</th>
@@ -50,7 +89,11 @@ export default function Customers() {
                                     const totalLent = customerLoans.reduce((sumAmount, l) => sumAmount + l.principal, 0);
 
                                     return (
-                                        <tr key={customer.id} className="motion-item">
+                                        <tr
+                                            key={customer.id}
+                                            className="motion-item customer-row-clickable"
+                                            onClick={() => setSelectedCustomer(customer)}
+                                        >
                                             <td data-label="Cliente">
                                                 <strong>{customer.name}</strong><br />
                                                 <small className="muted">{customer.id}</small>
@@ -62,9 +105,18 @@ export default function Customers() {
                                             <td data-label="Prestamos activos">{activeCount}</td>
                                             <td data-label="Total prestado">{money(totalLent)}</td>
                                             <td data-label="Accion">
-                                                <button type="button" className="action-link" onClick={() => setSelectedCustomer(customer)}>
-                                                    Ver detalle
-                                                </button>
+                                                <div className="action-group-inline">
+                                                    <button
+                                                        type="button"
+                                                        className="action-link"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation();
+                                                            setSelectedCustomer(customer);
+                                                        }}
+                                                    >
+                                                        Ver detalle
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     );
@@ -95,18 +147,32 @@ export default function Customers() {
                     payments={state.payments.filter((payment) => payment.customerId === selectedCustomer.id)}
                     paymentPromises={(state.paymentPromises || []).filter((promise) => promise.customerId === selectedCustomer.id)}
                     fullState={state}
+                    readOnly={readOnly}
+                    deletingCustomerId={deletingCustomerId}
                     onClose={() => setSelectedCustomer(null)}
                     onCreateLoan={() => {
                         setSelectedCustomer(null);
                         openDrawer('loan');
                     }}
+                    onDeleteCustomer={handleDeleteCustomer}
                 />
             )}
         </section>
     );
 }
 
-function CustomerDetailModal({ customer, loans, payments, paymentPromises, fullState, onClose, onCreateLoan }) {
+function CustomerDetailModal({
+    customer,
+    loans,
+    payments,
+    paymentPromises,
+    fullState,
+    readOnly,
+    deletingCustomerId,
+    onClose,
+    onCreateLoan,
+    onDeleteCustomer
+}) {
     const activeLoans = loans.filter((loan) => loan.status === 'active' || loan.status === 'overdue');
     const totalLent = sum(loans, (loan) => loan.principal || 0);
     const totalCollected = sum(payments, (payment) => payment.amount || 0);
@@ -134,7 +200,6 @@ function CustomerDetailModal({ customer, loans, payments, paymentPromises, fullS
                     </div>
 
                     <div className="loan-detail-head-actions">
-                        <button type="button" className="btn btn-primary" onClick={onCreateLoan}>Nuevo prestamo</button>
                         <button type="button" className="loan-detail-close" onClick={onClose} aria-label="Cerrar detalle">
                             <span className="material-symbols-outlined">close</span>
                         </button>
@@ -172,6 +237,24 @@ function CustomerDetailModal({ customer, loans, payments, paymentPromises, fullS
                         </div>
                     </div>
                 </section>
+
+                <div className="card section-stack loan-detail-panel customer-detail-actions">
+                    <div className="section-head split">
+                        <h4>Acciones del cliente</h4>
+                        <span className="muted small">Gestion directa</span>
+                    </div>
+                    <div className="action-group-inline">
+                        <button type="button" className="btn btn-primary" onClick={onCreateLoan}>Nuevo prestamo</button>
+                        <button
+                            type="button"
+                            className="btn btn-bad"
+                            onClick={() => onDeleteCustomer(customer)}
+                            disabled={readOnly || deletingCustomerId === customer.id}
+                        >
+                            {deletingCustomerId === customer.id ? 'Eliminando...' : 'Eliminar cliente'}
+                        </button>
+                    </div>
+                </div>
 
                 <div className="loan-detail-grid">
                     <div className="loan-detail-column">
@@ -257,7 +340,7 @@ function CustomerDetailModal({ customer, loans, payments, paymentPromises, fullS
                                         <strong>{latestLoan.id}</strong>
                                         <span className="muted small">Inicio {formatDate(latestLoan.startDate)}</span>
                                         <div className="loan-detail-meta-row">
-                                            {statusTag(latestLoan.status)}
+                                            {statusTag(latestLoan.status, 'loan')}
                                             <span className="role-pill role-admin">{latestLoan.type}</span>
                                         </div>
                                     </div>
@@ -300,7 +383,7 @@ function CustomerDetailModal({ customer, loans, payments, paymentPromises, fullS
                                                 <td data-label="Tipo">{loan.type}</td>
                                                 <td data-label="Monto">{money(loan.principal)}</td>
                                                 <td data-label="Saldo">{money(loanOutstanding(loan))}</td>
-                                                <td data-label="Estado">{statusTag(loan.status)}</td>
+                                                <td data-label="Estado">{statusTag(loan.status, 'loan')}</td>
                                             </tr>
                                         )) : (
                                             <tr className="empty-row">

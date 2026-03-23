@@ -9,10 +9,12 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
     const { showToast } = useToast();
     const { state, bootstrapState } = useApp();
     const [loading, setLoading] = useState(false);
+    const [showLateFeeDetail, setShowLateFeeDetail] = useState(false);
 
     const [formData, setFormData] = useState({
         loanId: '',
         baseAmount: '',
+        interestAmount: '',
         lateFeeAmount: '',
         generateReceiptPdf: true,
         method: 'transfer',
@@ -20,19 +22,48 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
     });
 
     const selectedLoan = state.loans.find(l => String(l.id) === String(formData.loanId));
+    const isInterestOnlyLoan = selectedLoan?.paymentModel === 'interest_only_balloon';
     const baseOutstanding = selectedLoan ? loanOutstanding(selectedLoan) : 0;
-    const lateFeeOutstanding = selectedLoan ? loanLateFeeOutstanding(selectedLoan, state) : 0;
-    const outstanding = selectedLoan ? loanOutstandingWithPenalty(selectedLoan, state) : 0;
+    const interestOutstanding = selectedLoan
+        ? Math.max(Number(selectedLoan.interestOutstanding || 0), 0)
+        : 0;
+    const maturityPrincipalDue = isInterestOnlyLoan
+        ? Math.max(Number(selectedLoan?.maturityPrincipalDue || 0), 0)
+        : 0;
+    const interestLateFeeOutstanding = isInterestOnlyLoan
+        ? Math.max(Number(selectedLoan?.interestLateFeeOutstanding || 0), 0)
+        : 0;
+    const principalLateFeeOutstanding = isInterestOnlyLoan
+        ? Math.max(Number(selectedLoan?.principalLateFeeOutstanding || 0), 0)
+        : 0;
+    const lateFeeOutstanding = selectedLoan
+        ? (isInterestOnlyLoan ? Math.max(Number(selectedLoan.lateFeeOutstanding || 0), 0) : loanLateFeeOutstanding(selectedLoan, state))
+        : 0;
+    const outstanding = selectedLoan
+        ? (isInterestOnlyLoan
+            ? round2(Math.max(Number(selectedLoan.totalOutstanding || 0), baseOutstanding + interestOutstanding + lateFeeOutstanding))
+            : loanOutstandingWithPenalty(selectedLoan, state))
+        : 0;
     const selectedCustomer = selectedLoan ? state.customers.find(c => c.id === selectedLoan.customerId) : null;
     const installment = selectedLoan ? loanInstallment(selectedLoan) : 0;
 
     const rawBaseAmount = Number(formData.baseAmount || 0);
+    const rawInterestAmount = Number(formData.interestAmount || 0);
     const rawLateFeeAmount = Number(formData.lateFeeAmount || 0);
     const baseAmount = Number.isFinite(rawBaseAmount) ? Math.max(rawBaseAmount, 0) : 0;
+    const interestAmount = Number.isFinite(rawInterestAmount) ? Math.max(rawInterestAmount, 0) : 0;
     const lateFeeAmount = Number.isFinite(rawLateFeeAmount) ? Math.max(rawLateFeeAmount, 0) : 0;
-    const totalAmount = round2(baseAmount + lateFeeAmount);
+    const totalAmount = isInterestOnlyLoan
+        ? round2(baseAmount + interestAmount + lateFeeAmount)
+        : round2(baseAmount + lateFeeAmount);
+    const totalDueToday = isInterestOnlyLoan
+        ? round2(maturityPrincipalDue + interestOutstanding + lateFeeOutstanding)
+        : outstanding;
 
     const dueInstallmentBase = (() => {
+        if (isInterestOnlyLoan) {
+            return round2(interestOutstanding);
+        }
         if (!selectedLoan || installment <= 0 || baseOutstanding <= 0) return 0;
         const paidAmount = Number(selectedLoan.paidAmount || 0);
         const paidInstallments = Math.floor((paidAmount + 0.00001) / installment);
@@ -59,16 +90,23 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                     date: formData.date,
                     amount: totalAmount,
                     baseAmount: round2(baseAmount),
+                    principalAmount: round2(baseAmount),
+                    interestAmount: round2(interestAmount),
                     lateFeeAmount: round2(lateFeeAmount)
                 }
             });
 
             const paymentId = String(response?.payment?.id || '').trim();
             const lateFeeApplied = Number(response?.allocation?.lateFeeApplied || 0);
-            const baseApplied = Number(response?.allocation?.baseApplied || 0);
+            const baseApplied = Number(response?.allocation?.baseApplied || response?.allocation?.principalApplied || 0);
+            const interestApplied = Number(response?.allocation?.interestApplied || 0);
 
             if (lateFeeApplied > 0) {
-                showToast(`Pago registrado. ${money(baseApplied)} al prestamo y ${money(lateFeeApplied)} a mora.`);
+                if (isInterestOnlyLoan) {
+                    showToast(`Pago registrado. Capital: ${money(baseApplied)} · Interes: ${money(interestApplied)} · Mora: ${money(lateFeeApplied)}.`);
+                } else {
+                    showToast(`Pago registrado. ${money(baseApplied)} al prestamo y ${money(lateFeeApplied)} a mora.`);
+                }
             } else {
                 showToast('Pago registrado exitosamente');
             }
@@ -108,11 +146,13 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
             setFormData({
                 loanId: '',
                 baseAmount: '',
+                interestAmount: '',
                 lateFeeAmount: '',
                 generateReceiptPdf: true,
                 method: 'transfer',
                 date: isoToday()
             });
+            setShowLateFeeDetail(false);
             await bootstrapState();
             onClose();
         } catch (err) {
@@ -127,6 +167,7 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
             setFormData({
                 ...formData,
                 baseAmount: baseOutstanding > 0 ? baseOutstanding.toFixed(2) : '',
+                interestAmount: isInterestOnlyLoan && interestOutstanding > 0 ? interestOutstanding.toFixed(2) : '',
                 lateFeeAmount: lateFeeOutstanding > 0 ? lateFeeOutstanding.toFixed(2) : ''
             });
         }
@@ -136,7 +177,7 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
         if (selectedLoan && dueInstallmentBase > 0) {
             setFormData({
                 ...formData,
-                baseAmount: dueInstallmentBase.toFixed(2)
+                ...(isInterestOnlyLoan ? { interestAmount: dueInstallmentBase.toFixed(2) } : { baseAmount: dueInstallmentBase.toFixed(2) })
             });
         }
     };
@@ -173,7 +214,8 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                                 required
                                 value={formData.loanId}
                                 onChange={e => {
-                                    setFormData({ ...formData, loanId: e.target.value, baseAmount: '', lateFeeAmount: '' });
+                                    setShowLateFeeDetail(false);
+                                    setFormData({ ...formData, loanId: e.target.value, baseAmount: '', interestAmount: '', lateFeeAmount: '' });
                                 }}
                             >
                                 <option value="" disabled>Selecciona un prestamo activo</option>
@@ -189,7 +231,7 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                         </div>
 
                         <div className="form-group">
-                            <label>Cuota / base a pagar ($)</label>
+                            <label>{isInterestOnlyLoan ? 'Capital a abonar ($)' : 'Cuota / base a pagar ($)'}</label>
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
                                 <input
                                     type="number"
@@ -204,17 +246,54 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                                 <button
                                     type="button"
                                     className="btn btn-ghost"
-                                    onClick={handleSetInstallmentOnly}
-                                    disabled={!selectedLoan || dueInstallmentBase <= 0}
-                                    title="Pagar cuota vencida"
+                                    onClick={() => {
+                                        if (!selectedLoan) return;
+                                        if (isInterestOnlyLoan) {
+                                            setFormData({ ...formData, baseAmount: baseOutstanding > 0 ? baseOutstanding.toFixed(2) : '' });
+                                            return;
+                                        }
+                                        handleSetInstallmentOnly();
+                                    }}
+                                    disabled={!selectedLoan || (isInterestOnlyLoan ? baseOutstanding <= 0 : dueInstallmentBase <= 0)}
+                                    title={isInterestOnlyLoan ? 'Completar capital pendiente' : 'Pagar cuota vencida'}
                                 >
-                                    Cuota
+                                    {isInterestOnlyLoan ? 'Capital max' : 'Cuota'}
                                 </button>
                             </div>
                             <small className="muted" style={{ display: 'block', marginTop: '0.25rem' }}>
-                                Cuota vencida estimada: {money(dueInstallmentBase)}
+                                {isInterestOnlyLoan ? `Capital pendiente: ${money(baseOutstanding)}` : `Cuota vencida estimada: ${money(dueInstallmentBase)}`}
                             </small>
                         </div>
+
+                        {isInterestOnlyLoan && (
+                            <div className="form-group">
+                                <label>Interes vencido ($)</label>
+                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        max={interestOutstanding > 0 ? interestOutstanding : undefined}
+                                        placeholder="Ej. 350"
+                                        value={formData.interestAmount}
+                                        onChange={e => setFormData({ ...formData, interestAmount: e.target.value })}
+                                        style={{ flex: 1 }}
+                                    />
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        onClick={handleSetInstallmentOnly}
+                                        disabled={!selectedLoan || dueInstallmentBase <= 0}
+                                        title="Pagar interes vencido"
+                                    >
+                                        Interes
+                                    </button>
+                                </div>
+                                <small className="muted" style={{ display: 'block', marginTop: '0.25rem' }}>
+                                    Interes vencido pendiente: {money(interestOutstanding)}
+                                </small>
+                            </div>
+                        )}
 
                         <div className="form-group">
                             <label>Mora a pagar ($)</label>
@@ -240,10 +319,36 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                                 </button>
                             </div>
                             {selectedLoan && (
-                                <div className="cell-stack" style={{ marginTop: '0.25rem' }}>
-                                    <small className="muted">Saldo total: {money(outstanding)}</small>
-                                    {lateFeeOutstanding > 0 && <small className="muted">Mora acumulada: {money(lateFeeOutstanding)}</small>}
-                                    <small className="muted">Saldo base: {money(baseOutstanding)}</small>
+                                <div className="cell-stack" style={{ marginTop: '0.45rem', gap: '0.35rem' }}>
+                                    {isInterestOnlyLoan ? (
+                                        <>
+                                            <small className="muted">Total exigible hoy: {money(totalDueToday)}</small>
+                                            <small className="muted">Interes vencido: {money(interestOutstanding)}</small>
+                                            <small className="muted">Capital vencido: {money(maturityPrincipalDue)}</small>
+                                            {lateFeeOutstanding > 0 && <small className="muted">Mora total: {money(lateFeeOutstanding)}</small>}
+                                            {lateFeeOutstanding > 0 && (
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-ghost"
+                                                        onClick={() => setShowLateFeeDetail(current => !current)}
+                                                        aria-expanded={showLateFeeDetail}
+                                                        style={{ alignSelf: 'flex-start', padding: '0.2rem 0.65rem' }}
+                                                    >
+                                                        {showLateFeeDetail ? 'Ocultar detalle de mora' : 'Detalle de Mora'}
+                                                    </button>
+                                                    {showLateFeeDetail && (
+                                                        <small className="muted">Mora del interes: {money(interestLateFeeOutstanding)} · Mora de capital vencido: {money(principalLateFeeOutstanding)}</small>
+                                                    )}
+                                                </>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <small className="muted">Saldo pendiente total: {money(outstanding)}</small>
+                                            {lateFeeOutstanding > 0 && <small className="muted">Mora acumulada: {money(lateFeeOutstanding)}</small>}
+                                        </>
+                                    )}
                                 </div>
                             )}
                             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>

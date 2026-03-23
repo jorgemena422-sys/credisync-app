@@ -641,12 +641,146 @@ async function buildPaymentReceiptContext(user, paymentId) {
   const customer = (state.customers || []).find((item) => String(item.id) === String(payment.customerId));
   const tenantName = await getTenantName(user.tenantId);
   const currency = normalizeCurrency(state?.settings?.currency, DEFAULT_SUBSCRIPTION_CURRENCY);
-  const baseAmount = Number.isFinite(Number(payment.baseAmount)) ? Math.max(round2(Number(payment.baseAmount)), 0) : Math.max(round2(Number(payment.amount || 0)), 0);
-  const lateFeeAmount = Number.isFinite(Number(payment.lateFeeAmount)) ? Math.max(round2(Number(payment.lateFeeAmount)), 0) : Math.max(round2(Number(payment.amount || 0) - baseAmount), 0);
-  const totalPaidToDate = loan ? Math.max(round2(Number(loan.paidAmount || 0)), 0) : baseAmount;
-  const outstandingBase = loan ? loanOutstanding(loan) : 0;
-  const nextDueDate = loan ? loanNextDueDate(loan) : null;
-  const installmentProgress = paymentInstallmentProgress(loan, state.payments || [], payment.id);
+  const isInterestOnlyLoan = isInterestOnlyBalloonLoan(loan);
+  const loanSettings = state?.settings || {};
+  const referenceDate = startOfDay(toDate(payment?.date || new Date()));
+
+  const principalComponentFromPayment = (item) => {
+    const principalValue = Number.isFinite(Number(item?.principalAmount))
+      ? Number(item.principalAmount)
+      : (Number.isFinite(Number(item?.baseAmount)) ? Number(item.baseAmount) : 0);
+    return Math.max(round2(principalValue), 0);
+  };
+
+  const sumPrincipalPaid = (payments) => round2((payments || []).reduce((acc, item) => acc + principalComponentFromPayment(item), 0));
+
+  let loanPaymentsOrdered = sortPaymentsChronologically((state.payments || [])
+    .filter((item) => String(item?.loanId || "") === String(payment.loanId || "")));
+  if (!loanPaymentsOrdered.some((item) => String(item?.id || "") === String(payment.id || ""))) {
+    loanPaymentsOrdered = sortPaymentsChronologically([...loanPaymentsOrdered, payment]);
+  }
+
+  let paymentPosition = loanPaymentsOrdered.findIndex((item) => String(item?.id || "") === String(payment.id || ""));
+  if (paymentPosition < 0) {
+    paymentPosition = Math.max(loanPaymentsOrdered.length - 1, 0);
+  }
+
+  const paymentsBeforeTarget = loanPaymentsOrdered.slice(0, paymentPosition);
+  const paymentsUpToTarget = loanPaymentsOrdered.slice(0, paymentPosition + 1);
+
+  const principalAmount = Number.isFinite(Number(payment.principalAmount))
+    ? Math.max(round2(Number(payment.principalAmount)), 0)
+    : (Number.isFinite(Number(payment.baseAmount)) ? Math.max(round2(Number(payment.baseAmount)), 0) : 0);
+  const interestAmount = Number.isFinite(Number(payment.interestAmount))
+    ? Math.max(round2(Number(payment.interestAmount)), 0)
+    : 0;
+  const baseAmount = principalAmount;
+  const lateFeeAmount = Number.isFinite(Number(payment.lateFeeAmount))
+    ? Math.max(round2(Number(payment.lateFeeAmount)), 0)
+    : Math.max(round2(Number(payment.amount || 0) - principalAmount - interestAmount), 0);
+
+  let totalPaidToDate = baseAmount;
+  let outstandingBase = loan ? loanOutstanding(loan) : 0;
+  let nextDueDate = loan ? loanNextDueDate(loan) : null;
+  let paymentImpact = {
+    principalAmount: baseAmount,
+    interestAmount,
+    lateFeeAmount,
+    lateFeeInterestAmount: 0,
+    lateFeePrincipalAmount: 0
+  };
+  let remainingAfterPayment = {
+    totalDueToday: Math.max(round2(outstandingBase + lateFeeAmount), 0),
+    baseOutstanding: outstandingBase,
+    lateFeeOutstanding: 0,
+    interestOutstanding: 0,
+    maturityPrincipalDue: 0,
+    interestLateFeeOutstanding: 0,
+    principalLateFeeOutstanding: 0,
+    principalOutstanding: outstandingBase
+  };
+
+  if (loan) {
+    if (isInterestOnlyLoan) {
+      const snapshotBefore = interestOnlySnapshotAtDate(loan, loanSettings, paymentsBeforeTarget, referenceDate)
+        || interestOnlySnapshotAtDate(loan, loanSettings, [], referenceDate)
+        || {
+          principalOutstanding: Math.max(round2(Number(loan.principal || 0)), 0),
+          principalPaidToDate: 0,
+          interestOutstanding: 0,
+          interestLateFeeOutstanding: 0,
+          principalLateFeeOutstanding: 0,
+          lateFeeOutstanding: 0,
+          maturityPrincipalDue: 0,
+          totalDueBeforePrincipal: 0,
+          totalOutstanding: Math.max(round2(Number(loan.principal || 0)), 0),
+          nextDueDate: null
+        };
+      const snapshotAfter = interestOnlySnapshotAtDate(loan, loanSettings, paymentsUpToTarget, referenceDate) || snapshotBefore;
+
+      const interestLateFeeBefore = Math.max(round2(snapshotBefore.interestLateFeeOutstanding || 0), 0);
+      const principalLateFeeBefore = Math.max(round2(snapshotBefore.principalLateFeeOutstanding || 0), 0);
+      const lateFeeAppliedToInterest = round2(Math.min(lateFeeAmount, interestLateFeeBefore));
+      const lateFeeAppliedToPrincipal = round2(Math.min(Math.max(round2(lateFeeAmount - lateFeeAppliedToInterest), 0), principalLateFeeBefore));
+
+      totalPaidToDate = Math.max(round2(snapshotAfter.principalPaidToDate || 0), 0);
+      outstandingBase = Math.max(round2(snapshotAfter.principalOutstanding || 0), 0);
+      nextDueDate = snapshotAfter.nextDueDate || null;
+      paymentImpact = {
+        principalAmount: baseAmount,
+        interestAmount,
+        lateFeeAmount,
+        lateFeeInterestAmount: lateFeeAppliedToInterest,
+        lateFeePrincipalAmount: lateFeeAppliedToPrincipal
+      };
+
+      const maturityPrincipalDueAfter = Math.max(round2(snapshotAfter.maturityPrincipalDue || 0), 0);
+      const interestOutstandingAfter = Math.max(round2(snapshotAfter.interestOutstanding || 0), 0);
+      const interestLateFeeOutstandingAfter = Math.max(round2(snapshotAfter.interestLateFeeOutstanding || 0), 0);
+      const principalLateFeeOutstandingAfter = Math.max(round2(snapshotAfter.principalLateFeeOutstanding || 0), 0);
+      const lateFeeOutstandingAfter = Math.max(round2(snapshotAfter.lateFeeOutstanding || 0), 0);
+
+      remainingAfterPayment = {
+        totalDueToday: round2(maturityPrincipalDueAfter + interestOutstandingAfter + lateFeeOutstandingAfter),
+        baseOutstanding: outstandingBase,
+        lateFeeOutstanding: lateFeeOutstandingAfter,
+        interestOutstanding: interestOutstandingAfter,
+        maturityPrincipalDue: maturityPrincipalDueAfter,
+        interestLateFeeOutstanding: interestLateFeeOutstandingAfter,
+        principalLateFeeOutstanding: principalLateFeeOutstandingAfter,
+        principalOutstanding: outstandingBase
+      };
+    } else {
+      const principalPaidAfter = sumPrincipalPaid(paymentsUpToTarget);
+      const loanAfter = { ...loan, paidAmount: principalPaidAfter };
+      const penaltyAfter = loanPenaltySnapshotAtDate(loanAfter, loanSettings, paymentsUpToTarget, referenceDate);
+
+      totalPaidToDate = principalPaidAfter;
+      outstandingBase = Math.max(round2(loanOutstanding(loanAfter)), 0);
+      nextDueDate = loanNextDueDate(loanAfter);
+      paymentImpact = {
+        principalAmount: baseAmount,
+        interestAmount: 0,
+        lateFeeAmount,
+        lateFeeInterestAmount: 0,
+        lateFeePrincipalAmount: 0
+      };
+
+      const lateFeeOutstandingAfter = Math.max(round2(penaltyAfter?.lateFeeOutstanding || 0), 0);
+      remainingAfterPayment = {
+        totalDueToday: round2(outstandingBase + lateFeeOutstandingAfter),
+        baseOutstanding: outstandingBase,
+        lateFeeOutstanding: lateFeeOutstandingAfter,
+        interestOutstanding: 0,
+        maturityPrincipalDue: 0,
+        interestLateFeeOutstanding: 0,
+        principalLateFeeOutstanding: 0,
+        principalOutstanding: outstandingBase
+      };
+    }
+  }
+
+  const installmentProgress = paymentInstallmentProgress(loan, paymentsUpToTarget, payment.id);
   const customerDisplayId = String(customer?.id || payment.customerId || "-").trim() || "-";
   const paymentMethodLabel = ({
     transfer: "Transferencia bancaria",
@@ -662,11 +796,16 @@ async function buildPaymentReceiptContext(user, paymentId) {
     tenantName,
     currency,
     baseAmount,
+    principalAmount,
+    interestAmount,
     lateFeeAmount,
     totalAmount: round2(Number(payment.amount || 0)),
     totalPaidToDate,
     outstandingBase,
     nextDueDate,
+    isInterestOnlyLoan,
+    paymentImpact,
+    remainingAfterPayment,
     installmentNumber: installmentProgress.installmentNumber,
     installmentProgressLabel: installmentProgress.label,
     customerDisplayId,
@@ -731,13 +870,46 @@ function generatePaymentReceiptPdfBuffer(receiptContext) {
     const loanId = receiptContext?.loan?.id || receiptContext?.payment?.loanId || "-";
     const paymentDate = formatDateLabel(receiptContext?.payment?.date || "");
     const nextDueDate = receiptContext?.nextDueDate ? formatDateLabel(receiptContext.nextDueDate.toISOString()) : "Sin vencimiento";
+    const isInterestOnlyLoan = Boolean(receiptContext?.isInterestOnlyLoan);
     const montoOriginal = receiptContext?.loan ? formatMoneyValue(receiptContext.loan.principal, receiptContext.currency) : formatMoneyValue(0, receiptContext.currency);
     const totalPagado = formatMoneyValue(receiptContext.totalPaidToDate, receiptContext.currency);
     const saldoPendiente = formatMoneyValue(receiptContext.outstandingBase, receiptContext.currency);
     const totalPagadoDisplay = formatMoneyValue(receiptContext.totalAmount, receiptContext.currency);
-    const baseAplicadaDisplay = formatMoneyValue(receiptContext.baseAmount, receiptContext.currency);
-    const moraAplicadaDisplay = formatMoneyValue(receiptContext.lateFeeAmount, receiptContext.currency);
-    const cuotaActualDisplay = receiptContext?.installmentProgressLabel || "1/1";
+    const paymentImpact = receiptContext?.paymentImpact || {};
+    const remainingAfterPayment = receiptContext?.remainingAfterPayment || {};
+    const amountValue = (value) => Math.max(round2(Number(value || 0)), 0);
+    const moneyValue = (value) => formatMoneyValue(amountValue(value), receiptContext.currency);
+
+    const impactRows = isInterestOnlyLoan
+      ? [
+        { label: "Capital abonado", value: moneyValue(paymentImpact.principalAmount) },
+        { label: "Interes vencido pagado", value: moneyValue(paymentImpact.interestAmount) },
+        { label: "Mora total pagada", value: moneyValue(paymentImpact.lateFeeAmount), bold: true },
+        { label: "Mora del interes pagada", value: moneyValue(paymentImpact.lateFeeInterestAmount) },
+        { label: "Mora de capital vencido pagada", value: moneyValue(paymentImpact.lateFeePrincipalAmount) }
+      ]
+      : [
+        { label: "Cuota/base abonada", value: moneyValue(paymentImpact.principalAmount), bold: true },
+        { label: "Mora pagada", value: moneyValue(paymentImpact.lateFeeAmount) },
+        { label: "Total pagado", value: totalPagadoDisplay }
+      ];
+
+    const remainingRows = isInterestOnlyLoan
+      ? [
+        { label: "Total exigible hoy", value: moneyValue(remainingAfterPayment.totalDueToday), bold: true },
+        { label: "Interes vencido pendiente", value: moneyValue(remainingAfterPayment.interestOutstanding) },
+        { label: "Capital vencido pendiente", value: moneyValue(remainingAfterPayment.maturityPrincipalDue) },
+        { label: "Mora total pendiente", value: moneyValue(remainingAfterPayment.lateFeeOutstanding), bold: true },
+        { label: "Mora del interes pendiente", value: moneyValue(remainingAfterPayment.interestLateFeeOutstanding) },
+        { label: "Mora de capital vencido pendiente", value: moneyValue(remainingAfterPayment.principalLateFeeOutstanding), gapAfter: 4 },
+        { label: "Capital pendiente total", value: moneyValue(remainingAfterPayment.principalOutstanding) }
+      ]
+      : [
+        { label: "Total exigible hoy", value: moneyValue(remainingAfterPayment.totalDueToday), bold: true },
+        { label: "Saldo base pendiente", value: moneyValue(remainingAfterPayment.baseOutstanding) },
+        { label: "Mora pendiente", value: moneyValue(remainingAfterPayment.lateFeeOutstanding) },
+        { label: "Saldo pendiente total", value: saldoPendiente, bold: true }
+      ];
     const blue = "#2952e3";
     const blueSoft = "#eef2ff";
     const ink = "#111827";
@@ -767,6 +939,42 @@ function generatePaymentReceiptPdfBuffer(receiptContext) {
       doc.font(options.bold ? "Helvetica-Bold" : "Helvetica").fontSize(options.valueSize || 11).fillColor(options.valueColor || ink).text(value, x, y + 14, { width, align: options.align || "left" });
     };
 
+    const drawAmountRows = (rows, x, y, width, options = {}) => {
+      const labelWidth = Math.max((options.labelWidth || (width - 110)), 80);
+      const valueWidth = width - labelWidth;
+      const rowGap = options.rowGap || 6;
+      const minRowHeight = options.minRowHeight || 13;
+      let cursorY = y;
+
+      for (const row of rows) {
+        const labelText = String(row?.label || "");
+        const valueText = String(row?.value || "");
+
+        doc
+          .font("Helvetica")
+          .fontSize(options.labelSize || 8.8)
+          .fillColor(options.labelColor || muted)
+          .text(labelText, x, cursorY, { width: labelWidth, align: "left" });
+
+        doc
+          .font(row?.bold ? "Helvetica-Bold" : (options.valueBold ? "Helvetica-Bold" : "Helvetica"))
+          .fontSize(options.valueSize || 9.6)
+          .fillColor(options.valueColor || ink)
+          .text(valueText, x + labelWidth, cursorY, { width: valueWidth, align: "right", lineBreak: false });
+
+        doc.font("Helvetica").fontSize(options.labelSize || 8.8);
+        const labelHeight = doc.heightOfString(labelText, { width: labelWidth, align: "left" });
+        const valueFont = row?.bold ? "Helvetica-Bold" : (options.valueBold ? "Helvetica-Bold" : "Helvetica");
+        doc.font(valueFont).fontSize(options.valueSize || 9.6);
+        const valueHeight = doc.heightOfString(valueText, { width: valueWidth, align: "right" });
+        const rowHeight = Math.max(labelHeight, valueHeight, minRowHeight);
+
+        cursorY += rowHeight + rowGap + Math.max(Number(row?.gapAfter || 0), 0);
+      }
+
+      return cursorY;
+    };
+
     const fitFontSize = (text, maxWidth, maxSize, minSize = 15) => {
       let size = maxSize;
       while (size > minSize) {
@@ -788,13 +996,19 @@ function generatePaymentReceiptPdfBuffer(receiptContext) {
     const rightX = headerMidX + 14;
     const rightWidth = contentWidth - (rightX - margin);
 
+    const logoSize = 38;
+    const logoX = leftX;
+    const logoY = headerTop + 6;
+    const brandX = logoX + logoSize + 16;
+    const brandWidth = 220;
+
     doc.save();
-    doc.roundedRect(leftX, headerTop + 6, 38, 38, 12).fill(blue);
-    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(15).text("L", leftX + 14, headerTop + 17, { width: 10, align: "center" });
+    doc.roundedRect(logoX, logoY, logoSize, logoSize, 12).fill(blue);
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(11.5).text("CR", logoX + 9, logoY + 12, { width: 20, align: "center" });
     doc.restore();
 
-    doc.font("Helvetica-Bold").fontSize(27).fillColor(blue).text("CREDISYNC", leftX + 50, headerTop + 6, { width: 214, height: 30, align: "left" });
-    doc.font("Helvetica-Bold").fontSize(7).fillColor(muted).text("POWERED BY CREDISYNC", leftX, headerTop + 60, { width: 210, characterSpacing: 1.2, align: "left" });
+    doc.font("Helvetica-Bold").fontSize(25).fillColor(blue).text("CREDISYNC", brandX, logoY + 2, { width: brandWidth, height: 30, align: "left" });
+    doc.font("Helvetica-Bold").fontSize(7).fillColor(muted).text("POWERED BY CREDISYNC", brandX, logoY + 33, { width: brandWidth, characterSpacing: 1.15, align: "left" });
 
     doc.font("Helvetica-Bold").fontSize(16).fillColor(ink).text("COMPROBANTE DE\nPAGO", rightX, headerTop + 6, { width: rightWidth, lineGap: 4, align: "left" });
     doc.font("Helvetica").fontSize(8.4).fillColor(muted).text(`Recibo N.: ${receiptContext?.payment?.id || "-"}`, rightX, headerTop + 60, { width: rightWidth, align: "left" });
@@ -824,22 +1038,35 @@ function generatePaymentReceiptPdfBuffer(receiptContext) {
     doc.text(receiptContext.paymentMethodLabel, margin + 252, 372, { width: 150, align: "left" });
     doc.font("Helvetica-Bold").text(totalPagadoDisplay, margin + 418, 372, { width: 92, align: "right" });
 
-    drawSectionTitle(margin, 410, "P", "Proximo vencimiento");
-    drawRoundedCard(margin, 428, 214, 88, blueSoft, "#dbe5ff", 10);
-    drawLabelValue(margin + 16, 444, "Fecha limite", nextDueDate, 140, { valueColor: blue, valueSize: 18, bold: true });
-    doc.font("Helvetica-Oblique").fontSize(7.8).fillColor(blue).text("Evite cargos por mora pagando antes de esta fecha.", margin + 16, 492, { width: 176 });
+    drawSectionTitle(margin, 410, "R", "Impacto y saldo pendiente");
 
-    drawRoundedCard(margin + 234, 428, 278, 146, panel, line, 10);
-    drawLabelValue(margin + 252, 444, "Monto original", montoOriginal, 160, { valueSize: 10.8, bold: true });
-    drawLabelValue(margin + 252, 476, "Cuota actual", cuotaActualDisplay, 160, { valueSize: 12, valueColor: blue, bold: true });
-    drawLabelValue(margin + 252, 508, "Mora aplicada", moraAplicadaDisplay, 160, { valueSize: 10.8, bold: true });
-    drawLabelValue(margin + 252, 540, "Total pagado a la fecha", totalPagado, 160, { valueSize: 10.4, valueColor: green, bold: true });
-    doc.strokeColor(line).lineWidth(1).moveTo(margin + 252, 562).lineTo(margin + 492, 562).stroke();
-    doc.font("Helvetica-Bold").fontSize(9.5).fillColor(ink).text("SALDO PENDIENTE", margin + 252, 574, { width: 120 });
-    doc.font("Helvetica-Bold").fontSize(16).text(saldoPendiente, margin + 352, 571, { width: 140, align: "right" });
+    const impactCardX = margin;
+    const impactCardY = 428;
+    const impactCardWidth = 248;
+    const impactCardHeight = 188;
+    const remainingCardX = margin + 264;
+    const remainingCardWidth = contentWidth - (remainingCardX - margin);
 
-    doc.strokeColor(line).lineWidth(1).moveTo(margin, 604).lineTo(margin + contentWidth, 604).stroke();
-    doc.font("Helvetica-Bold").fontSize(8).fillColor(muted).text("2026 CREDISYNC ALL RIGHTS RESERVED.", margin, 618, { width: 220, align: "left" });
+    drawRoundedCard(impactCardX, impactCardY, impactCardWidth, impactCardHeight, blueSoft, "#dbe5ff", 10);
+    drawRoundedCard(remainingCardX, impactCardY, remainingCardWidth, impactCardHeight, panel, line, 10);
+
+    doc.font("Helvetica-Bold").fontSize(8.8).fillColor(blue).text("ESTE PAGO IMPACTO EN", impactCardX + 14, impactCardY + 14, { width: impactCardWidth - 28, characterSpacing: 0.45 });
+    drawAmountRows(impactRows, impactCardX + 14, impactCardY + 36, impactCardWidth - 28, { rowGap: 20, labelWidth: 122 });
+
+    doc.font("Helvetica-Bold").fontSize(8.8).fillColor(ink).text("DESPUES DE ESTE PAGO RESTA", remainingCardX + 14, impactCardY + 14, { width: remainingCardWidth - 28, characterSpacing: 0.35 });
+    drawAmountRows(remainingRows, remainingCardX + 14, impactCardY + 36, remainingCardWidth - 28, {
+      rowGap: 4,
+      minRowHeight: 12,
+      labelSize: 8,
+      valueSize: 9.2,
+      labelWidth: 132
+    });
+
+    doc.font("Helvetica-Oblique").fontSize(8).fillColor(muted).text(`Proximo vencimiento: ${nextDueDate}`, margin, 626, { width: contentWidth, align: "left" });
+    doc.text(`Capital original: ${montoOriginal}  ·  Capital pagado a la fecha: ${totalPagado}`, margin, 640, { width: contentWidth, align: "left" });
+
+    doc.strokeColor(line).lineWidth(1).moveTo(margin, 662).lineTo(margin + contentWidth, 662).stroke();
+    doc.font("Helvetica-Bold").fontSize(8).fillColor(muted).text("2026 CREDISYNC ALL RIGHTS RESERVED.", margin, 676, { width: 220, align: "left" });
 
     doc.end();
   });
@@ -1375,6 +1602,19 @@ function isoToday() {
 }
 
 const PAYMENT_META_MARKER = "__CSMETA__:";
+const PAYMENT_MODEL_LEGACY = "legacy_add_on";
+const PAYMENT_MODEL_INTEREST_ONLY_BALLOON = "interest_only_balloon";
+
+function normalizePaymentModel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === PAYMENT_MODEL_INTEREST_ONLY_BALLOON
+    ? PAYMENT_MODEL_INTEREST_ONLY_BALLOON
+    : PAYMENT_MODEL_LEGACY;
+}
+
+function isInterestOnlyBalloonLoan(loan) {
+  return normalizePaymentModel(loan?.paymentModel) === PAYMENT_MODEL_INTEREST_ONLY_BALLOON;
+}
 
 function decodePaymentMeta(storedNote) {
   const raw = String(storedNote || "");
@@ -1422,16 +1662,27 @@ function paymentMetaSnapshot(meta) {
   const carryAfter = Number(meta?.penalty?.carryAfter);
   const episodeNumberAfter = Number(meta?.penalty?.episodeNumberAfter);
   const episodeLateFeePaidAfter = Number(meta?.penalty?.episodeLateFeePaidAfter);
-  if (!Number.isFinite(carryAfter) || !Number.isFinite(episodeNumberAfter) || !Number.isFinite(episodeLateFeePaidAfter)) {
+  const hasLegacyPenaltySnapshot = Number.isFinite(carryAfter) && Number.isFinite(episodeNumberAfter) && Number.isFinite(episodeLateFeePaidAfter);
+
+  const baseAmount = Number.isFinite(Number(meta?.alloc?.baseAmount)) ? Math.max(round2(Number(meta.alloc.baseAmount)), 0) : null;
+  const lateFeeAmount = Number.isFinite(Number(meta?.alloc?.lateFeeAmount)) ? Math.max(round2(Number(meta.alloc.lateFeeAmount)), 0) : null;
+  const principalAmount = Number.isFinite(Number(meta?.alloc?.principalAmount)) ? Math.max(round2(Number(meta.alloc.principalAmount)), 0) : baseAmount;
+  const interestAmount = Number.isFinite(Number(meta?.alloc?.interestAmount)) ? Math.max(round2(Number(meta.alloc.interestAmount)), 0) : null;
+  const model = normalizePaymentModel(meta?.alloc?.paymentModel);
+
+  if (!hasLegacyPenaltySnapshot && !Number.isFinite(principalAmount) && !Number.isFinite(interestAmount) && !Number.isFinite(lateFeeAmount)) {
     return null;
   }
 
   return {
-    carryAfter: Math.max(round2(carryAfter), 0),
-    episodeNumberAfter: Math.max(Math.round(episodeNumberAfter), 1),
-    episodeLateFeePaidAfter: Math.max(round2(episodeLateFeePaidAfter), 0),
-    baseAmount: Number.isFinite(Number(meta?.alloc?.baseAmount)) ? Math.max(round2(Number(meta.alloc.baseAmount)), 0) : null,
-    lateFeeAmount: Number.isFinite(Number(meta?.alloc?.lateFeeAmount)) ? Math.max(round2(Number(meta.alloc.lateFeeAmount)), 0) : null
+    carryAfter: hasLegacyPenaltySnapshot ? Math.max(round2(carryAfter), 0) : null,
+    episodeNumberAfter: hasLegacyPenaltySnapshot ? Math.max(Math.round(episodeNumberAfter), 1) : null,
+    episodeLateFeePaidAfter: hasLegacyPenaltySnapshot ? Math.max(round2(episodeLateFeePaidAfter), 0) : null,
+    baseAmount,
+    principalAmount,
+    interestAmount,
+    lateFeeAmount,
+    paymentModel: model
   };
 }
 
@@ -1525,20 +1776,310 @@ function mapPaymentRow(paymentRow) {
     loanId: paymentRow.loan_id,
     customerId: paymentRow.customer_id,
     date: paymentRow.date,
+    createdAt: paymentRow.created_at || paymentRow.createdAt || null,
     amount: Number(paymentRow.amount || 0),
     method: paymentRow.method,
     note: parsed.note || "",
     baseAmount: snapshot ? snapshot.baseAmount : null,
+    principalAmount: snapshot ? snapshot.principalAmount : null,
+    interestAmount: snapshot ? snapshot.interestAmount : null,
     lateFeeAmount: snapshot ? snapshot.lateFeeAmount : null,
     lateFeeCarryAfter: snapshot ? snapshot.carryAfter : null,
     lateFeeEpisodeNumberAfter: snapshot ? snapshot.episodeNumberAfter : null,
-    lateFeeEpisodeLatePaidAfter: snapshot ? snapshot.episodeLateFeePaidAfter : null
+    lateFeeEpisodeLatePaidAfter: snapshot ? snapshot.episodeLateFeePaidAfter : null,
+    paymentModel: snapshot ? snapshot.paymentModel : PAYMENT_MODEL_LEGACY
+  };
+}
+
+function monthRateForLoan(loan) {
+  const rate = Math.max(Number(loan?.interestRate) || 0, 0) / 100;
+  return loan?.interestRateMode === "monthly" ? rate : (rate / 12);
+}
+
+function loanPrincipalOutstanding(loan) {
+  if (!loan) {
+    return 0;
+  }
+  const explicitPrincipalOutstanding = Number(loan.principalOutstanding);
+  if (Number.isFinite(explicitPrincipalOutstanding)) {
+    return Math.max(round2(explicitPrincipalOutstanding), 0);
+  }
+  if (isInterestOnlyBalloonLoan(loan)) {
+    return Math.max(round2(Number(loan.principal || 0) - Number(loan.paidAmount || 0)), 0);
+  }
+  return Math.max(round2(Number(loan.principal || 0) - Number(loan.paidAmount || 0)), 0);
+}
+
+function addMonthsSafe(date, monthsToAdd) {
+  const clone = new Date(date.getTime());
+  clone.setMonth(clone.getMonth() + monthsToAdd);
+  return clone;
+}
+
+function addDaysSafe(date, daysToAdd) {
+  const clone = new Date(date.getTime());
+  clone.setDate(clone.getDate() + daysToAdd);
+  return clone;
+}
+
+function interestOnlyPeriodSchedule(loan) {
+  const startDate = startOfDay(toDate(loan?.startDate));
+  if (Number.isNaN(startDate.getTime())) {
+    return [];
+  }
+  const termMonths = Math.max(Number(loan?.termMonths || 0), 0);
+  const schedule = [];
+  for (let periodNumber = 1; periodNumber <= termMonths; periodNumber += 1) {
+    const periodStart = addMonthsSafe(startDate, periodNumber - 1);
+    const dueDate = addMonthsSafe(startDate, periodNumber);
+    schedule.push({
+      periodNumber,
+      periodStart,
+      dueDate,
+      interestCharged: 0,
+      interestPaid: 0,
+      interestSettledAt: null,
+      interestAllocations: []
+    });
+  }
+  return schedule;
+}
+
+function interestOnlySnapshotAtDate(loan, settings, payments, referenceDate = new Date()) {
+  if (!isInterestOnlyBalloonLoan(loan)) {
+    return null;
+  }
+
+  const referenceDay = startOfDay(referenceDate instanceof Date ? referenceDate : new Date(referenceDate || Date.now()));
+  if (Number.isNaN(referenceDay.getTime())) {
+    return null;
+  }
+
+  const principal = Math.max(Number(loan?.principal || 0), 0);
+  const monthlyRate = monthRateForLoan(loan);
+  const graceDays = Math.max(Number(settings?.graceDays) || 0, 0);
+  const dailyRate = Math.max(Number(settings?.latePenaltyRate) || 0, 0) / 100;
+  const schedule = interestOnlyPeriodSchedule(loan);
+  const startDate = startOfDay(toDate(loan?.startDate));
+  const maturityDate = addMonthsSafe(startDate, Math.max(Number(loan?.termMonths || 0), 0));
+
+  const orderedPayments = sortPaymentsChronologically((payments || [])
+    .filter((item) => String(item?.loanId || item?.loan_id) === String(loan.id))
+    .filter((item) => {
+      const paymentDate = startOfDay(toDate(item?.date || ""));
+      return !Number.isNaN(paymentDate.getTime()) && paymentDate.getTime() <= referenceDay.getTime();
+    }));
+
+  const principalPaidByDate = orderedPayments.map((payment) => {
+    const paymentDate = startOfDay(toDate(payment?.date || ""));
+    const principalAmount = Number.isFinite(Number(payment?.principalAmount))
+      ? Math.max(round2(Number(payment.principalAmount)), 0)
+      : Math.max(round2(Number(payment?.baseAmount || 0)), 0);
+    return {
+      date: paymentDate,
+      principalAmount,
+      interestAmount: Math.max(round2(Number(payment?.interestAmount || 0)), 0),
+      lateFeeAmount: Math.max(round2(Number(payment?.lateFeeAmount || 0)), 0)
+    };
+  });
+
+  for (const period of schedule) {
+    const principalPaidBeforePeriod = principalPaidByDate
+      .filter((entry) => entry.date.getTime() < period.periodStart.getTime())
+      .reduce((acc, entry) => acc + entry.principalAmount, 0);
+    const principalAtPeriodStart = Math.max(round2(principal - principalPaidBeforePeriod), 0);
+    period.interestCharged = round2(principalAtPeriodStart * monthlyRate);
+    period.interestPaid = 0;
+    period.interestSettledAt = period.interestCharged <= 0 ? period.periodStart : null;
+    period.interestAllocations = [];
+  }
+
+  for (const payment of principalPaidByDate) {
+    let pendingInterestFromPayment = payment.interestAmount;
+    if (pendingInterestFromPayment <= 0) {
+      continue;
+    }
+    for (const period of schedule) {
+      const periodOutstanding = Math.max(round2(period.interestCharged - period.interestPaid), 0);
+      if (periodOutstanding <= 0) {
+        continue;
+      }
+      const applied = Math.min(periodOutstanding, pendingInterestFromPayment);
+      if (applied <= 0) {
+        continue;
+      }
+      period.interestPaid = round2(period.interestPaid + applied);
+      period.interestAllocations.push({
+        date: payment.date,
+        amount: round2(applied)
+      });
+      if (!period.interestSettledAt && period.interestPaid >= Math.max(round2(period.interestCharged - 0.00001), 0)) {
+        period.interestSettledAt = payment.date;
+      }
+      pendingInterestFromPayment = round2(pendingInterestFromPayment - applied);
+      if (pendingInterestFromPayment <= 0.00001) {
+        break;
+      }
+    }
+  }
+
+  const duePeriods = schedule.filter((period) => period.dueDate.getTime() <= referenceDay.getTime());
+  const interestOutstanding = round2(duePeriods.reduce((acc, period) => {
+    const outstanding = Math.max(round2(period.interestCharged - period.interestPaid), 0);
+    return acc + outstanding;
+  }, 0));
+
+  const totalLateFeePaid = round2(principalPaidByDate.reduce((acc, payment) => acc + payment.lateFeeAmount, 0));
+  const principalPaidToDate = round2(principalPaidByDate.reduce((acc, entry) => acc + entry.principalAmount, 0));
+  const principalOutstanding = Math.max(round2(principal - principalPaidToDate), 0);
+  const maturityPrincipalDue = maturityDate.getTime() <= referenceDay.getTime() ? principalOutstanding : 0;
+
+  let maxOverdueDays = 0;
+  const interestPenaltyEvents = new Map();
+  const principalPenaltyEvents = new Map();
+
+  const queuePenaltyEvent = (bucket, date, delta) => {
+    const amount = round2(Number(delta || 0));
+    if (!Number.isFinite(amount) || Math.abs(amount) <= 0.00001) {
+      return;
+    }
+    const day = startOfDay(date instanceof Date ? date : toDate(date));
+    if (Number.isNaN(day.getTime()) || day.getTime() >= referenceDay.getTime()) {
+      return;
+    }
+    const key = day.getTime();
+    const current = Number(bucket.get(key) || 0);
+    bucket.set(key, round2(current + amount));
+  };
+
+  for (const period of duePeriods) {
+    const chargedInterest = Math.max(round2(period.interestCharged), 0);
+    if (chargedInterest <= 0) {
+      continue;
+    }
+
+    const outstandingNow = Math.max(round2(chargedInterest - period.interestPaid), 0);
+    const rawOverdueNow = Math.floor((referenceDay.getTime() - period.dueDate.getTime()) / 86400000);
+    if (outstandingNow > 0 && rawOverdueNow > graceDays) {
+      maxOverdueDays = Math.max(maxOverdueDays, Math.max(0, rawOverdueNow - graceDays));
+    }
+
+    if (dailyRate <= 0 || rawOverdueNow <= graceDays) {
+      continue;
+    }
+
+    const allocations = (period.interestAllocations || [])
+      .filter((allocation) => allocation.date.getTime() <= referenceDay.getTime())
+      .sort((left, right) => left.date.getTime() - right.date.getTime());
+
+    const graceCutoff = addDaysSafe(period.dueDate, graceDays);
+    const paidBeforeGraceCutoff = allocations
+      .filter((allocation) => allocation.date.getTime() < graceCutoff.getTime())
+      .reduce((acc, allocation) => acc + Number(allocation.amount || 0), 0);
+    const outstandingAtGraceCutoff = Math.max(round2(chargedInterest - paidBeforeGraceCutoff), 0);
+    if (outstandingAtGraceCutoff <= 0) {
+      continue;
+    }
+
+    const paidBeforeDueDate = allocations
+      .filter((allocation) => allocation.date.getTime() < period.dueDate.getTime())
+      .reduce((acc, allocation) => acc + Number(allocation.amount || 0), 0);
+    const outstandingAtDueDate = Math.max(round2(chargedInterest - paidBeforeDueDate), 0);
+    if (outstandingAtDueDate <= 0) {
+      continue;
+    }
+
+    queuePenaltyEvent(interestPenaltyEvents, period.dueDate, outstandingAtDueDate);
+    allocations
+      .filter((allocation) => allocation.date.getTime() >= period.dueDate.getTime())
+      .forEach((allocation) => queuePenaltyEvent(interestPenaltyEvents, allocation.date, -Number(allocation.amount || 0)));
+  }
+
+  if (principalOutstanding > 0 && maturityDate.getTime() <= referenceDay.getTime()) {
+    const rawMaturityOverdueDays = Math.floor((referenceDay.getTime() - maturityDate.getTime()) / 86400000);
+    if (rawMaturityOverdueDays > graceDays) {
+      maxOverdueDays = Math.max(maxOverdueDays, Math.max(0, rawMaturityOverdueDays - graceDays));
+    }
+
+    if (dailyRate > 0 && rawMaturityOverdueDays > graceDays) {
+      const principalPaidBeforeMaturity = principalPaidByDate
+        .filter((entry) => entry.date.getTime() < maturityDate.getTime())
+        .reduce((acc, entry) => acc + entry.principalAmount, 0);
+      const principalAtMaturityDate = Math.max(round2(principal - principalPaidBeforeMaturity), 0);
+
+      if (principalAtMaturityDate > 0) {
+        queuePenaltyEvent(principalPenaltyEvents, maturityDate, principalAtMaturityDate);
+        principalPaidByDate
+          .filter((entry) => entry.date.getTime() >= maturityDate.getTime() && entry.date.getTime() <= referenceDay.getTime())
+          .forEach((entry) => queuePenaltyEvent(principalPenaltyEvents, entry.date, -entry.principalAmount));
+      }
+    }
+  }
+
+  const calculateLateFeeAccrued = (eventsMap) => {
+    if (dailyRate <= 0 || eventsMap.size === 0) {
+      return 0;
+    }
+    const eventDates = [...eventsMap.keys()].sort((left, right) => left - right);
+    let overdueBalance = 0;
+    let accrued = 0;
+    for (let index = 0; index < eventDates.length; index += 1) {
+      const eventDate = eventDates[index];
+      overdueBalance = Math.max(round2(overdueBalance + Number(eventsMap.get(eventDate) || 0)), 0);
+      const nextEventDate = index + 1 < eventDates.length ? eventDates[index + 1] : referenceDay.getTime();
+      const segmentEnd = Math.min(nextEventDate, referenceDay.getTime());
+      const segmentDays = Math.floor((segmentEnd - eventDate) / 86400000);
+      if (segmentDays > 0 && overdueBalance > 0) {
+        accrued = round2(accrued + (overdueBalance * dailyRate * segmentDays));
+      }
+    }
+    return accrued;
+  };
+
+  const interestLateFeeAccrued = calculateLateFeeAccrued(interestPenaltyEvents);
+  const principalLateFeeAccrued = calculateLateFeeAccrued(principalPenaltyEvents);
+
+  const interestLateFeePaid = Math.min(totalLateFeePaid, interestLateFeeAccrued);
+  const principalLateFeePaid = Math.min(Math.max(round2(totalLateFeePaid - interestLateFeePaid), 0), principalLateFeeAccrued);
+
+  const interestLateFeeOutstanding = Math.max(round2(interestLateFeeAccrued - interestLateFeePaid), 0);
+  const principalLateFeeOutstanding = Math.max(round2(principalLateFeeAccrued - principalLateFeePaid), 0);
+  const lateFeeOutstanding = round2(interestLateFeeOutstanding + principalLateFeeOutstanding);
+  const totalDueBeforePrincipal = round2(interestOutstanding + lateFeeOutstanding);
+  const nextDuePeriod = schedule.find((period) => Math.max(round2(period.interestCharged - period.interestPaid), 0) > 0);
+
+  return {
+    principalOutstanding,
+    principalPaidToDate,
+    interestOutstanding,
+    interestLateFeeOutstanding,
+    principalLateFeeOutstanding,
+    lateFeeOutstanding,
+    maturityPrincipalDue,
+    totalDueBeforePrincipal,
+    totalOutstanding: round2(principalOutstanding + interestOutstanding + lateFeeOutstanding),
+    overdueDays: maxOverdueDays,
+    nextDueDate: nextDuePeriod ? nextDuePeriod.dueDate : null,
+    maturityDate,
+    schedule
   };
 }
 
 function paymentInstallmentProgress(loan, payments, targetPaymentId) {
   if (!loan) {
     return { installmentNumber: 1, label: "1/1" };
+  }
+
+  if (isInterestOnlyBalloonLoan(loan)) {
+    const termMonths = Math.max(Number(loan.termMonths || 0), 1);
+    const payment = (payments || []).find((item) => String(item.id) === String(targetPaymentId));
+    const reference = startOfDay(toDate(payment?.date || loan.startDate || new Date()));
+    const start = startOfDay(toDate(loan.startDate));
+    let periodNumber = 1;
+    if (!Number.isNaN(reference.getTime()) && !Number.isNaN(start.getTime())) {
+      periodNumber = Math.max(1, Math.min(termMonths, ((reference.getFullYear() - start.getFullYear()) * 12) + (reference.getMonth() - start.getMonth()) + 1));
+    }
+    return { installmentNumber: periodNumber, label: `${periodNumber}/${termMonths}` };
   }
 
   const installment = loanInstallment(loan);
@@ -1581,6 +2122,9 @@ function startOfDay(date) {
 }
 
 function loanTotalPayable(loan) {
+  if (isInterestOnlyBalloonLoan(loan)) {
+    return round2(Number(loan?.principal || 0));
+  }
   if (loan.interestRateMode === 'monthly') {
     return round2(loan.principal * (1 + (loan.interestRate / 100) * loan.termMonths));
   }
@@ -1588,14 +2132,23 @@ function loanTotalPayable(loan) {
 }
 
 function loanInstallment(loan) {
+  if (isInterestOnlyBalloonLoan(loan)) {
+    return round2(loanPrincipalOutstanding(loan) * monthRateForLoan(loan));
+  }
   return round2(loanTotalPayable(loan) / loan.termMonths);
 }
 
 function loanOutstanding(loan) {
+  if (isInterestOnlyBalloonLoan(loan)) {
+    return loanPrincipalOutstanding(loan);
+  }
   return Math.max(round2(loanTotalPayable(loan) - loan.paidAmount), 0);
 }
 
 function loanCapitalCommitted(loan) {
+  if (isInterestOnlyBalloonLoan(loan)) {
+    return loanPrincipalOutstanding(loan);
+  }
   return Math.max(round2(Number(loan.principal || 0) - Number(loan.paidAmount || 0)), 0);
 }
 
@@ -1604,6 +2157,17 @@ function capitalCommittedFromLoans(loans) {
 }
 
 function loanNextDueDate(loan) {
+  if (isInterestOnlyBalloonLoan(loan)) {
+    if (loan && loan.nextDueDate) {
+      return toDate(loan.nextDueDate);
+    }
+    const maturityDate = addMonthsSafe(toDate(loan?.startDate), Math.max(Number(loan?.termMonths || 0), 0));
+    const today = startOfDay(new Date());
+    if (!loan || loanOutstanding(loan) <= 0.5 || Number.isNaN(maturityDate.getTime()) || maturityDate.getTime() < today.getTime()) {
+      return null;
+    }
+    return maturityDate;
+  }
   if (!loan || loanOutstanding(loan) <= 0.5) {
     return null;
   }
@@ -1619,6 +2183,9 @@ function daysOverdue(loan, graceDays) {
 }
 
 function daysOverdueAtDate(loan, graceDays, referenceDate) {
+  if (isInterestOnlyBalloonLoan(loan)) {
+    return Math.max(Number(loan?.overdueDays || 0), 0);
+  }
   const dueDate = loanNextDueDate(loan);
   if (!dueDate) {
     return 0;
@@ -1634,6 +2201,10 @@ function daysOverdueAtDate(loan, graceDays, referenceDate) {
 }
 
 function loanLateFeeAccrued(loan, settings, referenceDate = new Date()) {
+  if (isInterestOnlyBalloonLoan(loan)) {
+    const snapshot = interestOnlySnapshotAtDate(loan, settings, [], referenceDate);
+    return Math.max(round2(snapshot?.lateFeeOutstanding || 0), 0);
+  }
   const dailyRate = Math.max(Number(settings?.latePenaltyRate) || 0, 0) / 100;
   if (!loan || dailyRate <= 0) {
     return 0;
@@ -1657,6 +2228,37 @@ function loanLateFeeAccrued(loan, settings, referenceDate = new Date()) {
 function refreshLoanStatuses(state) {
   const graceDays = Number(state.settings.graceDays) || 0;
   state.loans.forEach((loan) => {
+    if (isInterestOnlyBalloonLoan(loan)) {
+      const snapshot = interestOnlySnapshotAtDate(loan, state.settings, state.payments || [], new Date());
+      const principalOutstanding = Math.max(round2(snapshot?.principalOutstanding ?? loanPrincipalOutstanding(loan)), 0);
+      const interestOutstanding = Math.max(round2(snapshot?.interestOutstanding || 0), 0);
+      const interestLateFeeOutstanding = Math.max(round2(snapshot?.interestLateFeeOutstanding || 0), 0);
+      const principalLateFeeOutstanding = Math.max(round2(snapshot?.principalLateFeeOutstanding || 0), 0);
+      const lateFeeOutstanding = Math.max(round2(snapshot?.lateFeeOutstanding || 0), 0);
+      const maturityPrincipalDue = Math.max(round2(snapshot?.maturityPrincipalDue || 0), 0);
+      const totalOutstanding = Math.max(round2(snapshot?.totalOutstanding ?? (principalOutstanding + interestOutstanding + lateFeeOutstanding)), 0);
+      const overdueDays = Math.max(Number(snapshot?.overdueDays || 0), 0);
+
+      loan.principalOutstanding = principalOutstanding;
+      loan.interestOutstanding = interestOutstanding;
+      loan.interestLateFeeOutstanding = interestLateFeeOutstanding;
+      loan.principalLateFeeOutstanding = principalLateFeeOutstanding;
+      loan.lateFeeOutstanding = lateFeeOutstanding;
+      loan.maturityPrincipalDue = maturityPrincipalDue;
+      loan.totalOutstanding = totalOutstanding;
+      loan.overdueDays = overdueDays;
+      loan.nextDueDate = snapshot?.nextDueDate ? snapshot.nextDueDate.toISOString().slice(0, 10) : null;
+
+      if (totalOutstanding <= 0.5) {
+        loan.status = "paid";
+      } else if (maturityPrincipalDue > 0.01 || overdueDays > 0) {
+        loan.status = "overdue";
+      } else {
+        loan.status = "active";
+      }
+      return;
+    }
+
     const outstanding = loanOutstanding(loan);
     if (outstanding <= 0.5) {
       loan.status = "paid";
@@ -3062,17 +3664,30 @@ async function listDueTodayCalendarEvents(tenantId, timezone) {
 
         const { data: modes, error: modeError } = await supabase
           .from("loans")
-          .select("id,interest_rate_mode")
+          .select("id,interest_rate_mode,payment_model,principal_outstanding")
           .eq("tenant_id", tenantId);
 
         if (!modeError && Array.isArray(modes)) {
-          const modeMap = new Map(modes.map((item) => [item.id, item.interest_rate_mode || "annual"]));
+          const modeMap = new Map(modes.map((item) => [item.id, {
+            interestRateMode: item.interest_rate_mode || "annual",
+            paymentModel: normalizePaymentModel(item.payment_model),
+            principalOutstanding: Number.isFinite(Number(item.principal_outstanding))
+              ? Number(item.principal_outstanding)
+              : null
+          }]));
           res.data = (res.data || []).map((loan) => ({
             ...loan,
-            interest_rate_mode: modeMap.get(loan.id) || "annual"
+            interest_rate_mode: modeMap.get(loan.id)?.interestRateMode || "annual",
+            payment_model: modeMap.get(loan.id)?.paymentModel || PAYMENT_MODEL_LEGACY,
+            principal_outstanding: modeMap.get(loan.id)?.principalOutstanding
           }));
         } else {
-          res.data = (res.data || []).map((loan) => ({ ...loan, interest_rate_mode: "annual" }));
+          res.data = (res.data || []).map((loan) => ({
+            ...loan,
+            interest_rate_mode: "annual",
+            payment_model: PAYMENT_MODEL_LEGACY,
+            principal_outstanding: null
+          }));
         }
 
         return res;
@@ -3100,9 +3715,11 @@ async function listDueTodayCalendarEvents(tenantId, timezone) {
       principal: Number(loan.principal || 0),
       interestRate: Number(loan.interest_rate || 0),
       interestRateMode: loan.interest_rate_mode || "annual",
+      paymentModel: normalizePaymentModel(loan.payment_model),
       termMonths: Number(loan.term_months || 0),
       startDate: loan.start_date,
       paidAmount: Number(loan.paid_amount || 0),
+      principalOutstanding: Number.isFinite(Number(loan.principal_outstanding)) ? Number(loan.principal_outstanding) : null,
       status: loan.status || "active",
       createdAt: loan.created_at || null
     }))
@@ -3395,17 +4012,28 @@ async function readStateForTenant(tenantId) {
           // Try to fetch interest_rate_mode separately to fail gracefully if column missing
           const { data: modes, error: modeError } = await supabase
             .from("loans")
-            .select("id,interest_rate_mode")
+            .select("id,interest_rate_mode,payment_model,principal_outstanding")
             .eq("tenant_id", tenantId);
           
           if (!modeError && modes) {
-              const modeMap = Object.fromEntries(modes.map(m => [m.id, m.interest_rate_mode]));
+              const modeMap = Object.fromEntries(modes.map((m) => [m.id, {
+                interestRateMode: m.interest_rate_mode || "annual",
+                paymentModel: normalizePaymentModel(m.payment_model),
+                principalOutstanding: Number.isFinite(Number(m.principal_outstanding)) ? Number(m.principal_outstanding) : null
+              }]));
               res.data = res.data.map(loan => ({
                   ...loan,
-                  interest_rate_mode: modeMap[loan.id] || 'annual'
+                  interest_rate_mode: modeMap[loan.id]?.interestRateMode || 'annual',
+                  payment_model: modeMap[loan.id]?.paymentModel || PAYMENT_MODEL_LEGACY,
+                  principal_outstanding: modeMap[loan.id]?.principalOutstanding
               }));
           } else {
-              res.data = res.data.map(loan => ({ ...loan, interest_rate_mode: 'annual' }));
+              res.data = res.data.map(loan => ({
+                ...loan,
+                interest_rate_mode: 'annual',
+                payment_model: PAYMENT_MODEL_LEGACY,
+                principal_outstanding: null
+              }));
           }
           return res;
       }),
@@ -3479,9 +4107,11 @@ async function readStateForTenant(tenantId) {
       principal: Number(loan.principal || 0),
       interestRate: Number(loan.interest_rate || 0),
       interestRateMode: loan.interest_rate_mode || 'annual',
+      paymentModel: normalizePaymentModel(loan.payment_model),
       termMonths: Number(loan.term_months || 0),
       startDate: loan.start_date,
       paidAmount: Number(loan.paid_amount || 0),
+      principalOutstanding: Number.isFinite(Number(loan.principal_outstanding)) ? Number(loan.principal_outstanding) : null,
       status: loan.status || "active"
     })),
     payments: (paymentsResult.data || []).map((payment) => mapPaymentRow(payment)),
@@ -4845,6 +5475,50 @@ app.post("/api/customers", requireAuth, requireTenantUser, requireTenantWriteAcc
   }
 });
 
+app.delete("/api/customers/:id", requireAuth, requireTenantUser, requireTenantWriteAccess, async (req, res, next) => {
+  try {
+    const customerId = String(req.params.id || "").trim();
+    if (!customerId) {
+      return res.status(400).json({ message: "Cliente invalido" });
+    }
+
+    const { data: customer, error: customerError } = await supabase
+      .from("customers")
+      .select("id,name")
+      .eq("id", customerId)
+      .eq("tenant_id", req.user.tenantId)
+      .maybeSingle();
+
+    if (customerError) {
+      throw customerError;
+    }
+
+    if (!customer) {
+      return res.status(404).json({ message: "Cliente no encontrado" });
+    }
+
+    const { error: deleteError } = await supabase
+      .from("customers")
+      .delete()
+      .eq("id", customerId)
+      .eq("tenant_id", req.user.tenantId);
+
+    if (deleteError) {
+      throw deleteError;
+    }
+
+    return res.json({
+      ok: true,
+      customer: {
+        id: customer.id,
+        name: customer.name
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.get("/api/loans", requireAuth, requireTenantUser, async (req, res, next) => {
   try {
     const state = await readStateForUser(req.user);
@@ -4858,7 +5532,7 @@ app.get("/api/loans/:id", requireAuth, requireTenantUser, async (req, res, next)
   try {
     const { data, error } = await supabase
       .from("loans")
-      .select("id,tenant_id,customer_id,type,principal,interest_rate,interest_rate_mode,term_months,start_date,paid_amount,status")
+      .select("id,tenant_id,customer_id,type,principal,interest_rate,term_months,start_date,paid_amount,status")
       .eq("id", req.params.id)
       .eq("tenant_id", req.user.tenantId)
       .maybeSingle();
@@ -4871,10 +5545,10 @@ app.get("/api/loans/:id", requireAuth, requireTenantUser, async (req, res, next)
       return res.status(404).json({ message: "Prestamo no encontrado" });
     }
 
-    // Attempt to get interest_rate_mode
+    // Attempt to get optional loan columns
     const { data: modeData } = await supabase
       .from("loans")
-      .select("interest_rate_mode")
+      .select("interest_rate_mode,payment_model,principal_outstanding")
       .eq("id", req.params.id)
       .maybeSingle();
 
@@ -4887,9 +5561,11 @@ app.get("/api/loans/:id", requireAuth, requireTenantUser, async (req, res, next)
         principal: Number(data.principal || 0),
         interestRate: Number(data.interest_rate || 0),
         interestRateMode: (modeData && modeData.interest_rate_mode) || 'annual',
+        paymentModel: normalizePaymentModel(modeData?.payment_model),
         termMonths: Number(data.term_months || 0),
         startDate: data.start_date,
         paidAmount: Number(data.paid_amount || 0),
+        principalOutstanding: Number.isFinite(Number(modeData?.principal_outstanding)) ? Number(modeData.principal_outstanding) : null,
         status: data.status || "active"
       }
     });
@@ -4908,9 +5584,11 @@ app.post("/api/loans", requireAuth, requireTenantUser, requireTenantWriteAccess,
       principal: parseNumericInput(req.body.principal, NaN),
       interestRate: parseNumericInput(req.body.interestRate, NaN),
       interestRateMode: String(req.body.interestRateMode || "annual").trim().toLowerCase() === "monthly" ? "monthly" : "annual",
+      paymentModel: normalizePaymentModel(req.body.paymentModel),
       termMonths: parseNumericInput(req.body.termMonths, NaN),
       startDate: String(req.body.startDate || "").trim(),
       paidAmount: 0,
+      principalOutstanding: parseNumericInput(req.body.principal, NaN),
       status: "active"
     };
 
@@ -4963,6 +5641,7 @@ app.post("/api/loans", requireAuth, requireTenantUser, requireTenantWriteAccess,
       term_months: loan.termMonths,
       start_date: loan.startDate,
       paid_amount: loan.paidAmount,
+      principal_outstanding: loan.principalOutstanding,
       status: loan.status
     };
 
@@ -4972,15 +5651,28 @@ app.post("/api/loans", requireAuth, requireTenantUser, requireTenantWriteAccess,
       .insert([
         {
           ...loanPayload,
-          interest_rate_mode: loan.interestRateMode
+          interest_rate_mode: loan.interestRateMode,
+          payment_model: loan.paymentModel
         }
       ]);
 
     if (insertError) {
-      // If error is missing column, retry without it
+      // If error is missing optional columns, retry with baseline payload
+      const fallbackPayload = {
+        id: loan.id,
+        tenant_id: loan.tenantId,
+        customer_id: loan.customerId,
+        type: loan.type,
+        principal: loan.principal,
+        interest_rate: loan.interestRate,
+        term_months: loan.termMonths,
+        start_date: loan.startDate,
+        paid_amount: loan.paidAmount,
+        status: loan.status
+      };
       const { error: retryError } = await supabase
         .from("loans")
-        .insert([loanPayload]);
+        .insert([fallbackPayload]);
       
       if (retryError) throw retryError;
     }
@@ -5006,11 +5698,20 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
     const date = String(req.body.date || "").trim();
     const rawAmount = round2(parseNumericInput(req.body.amount, NaN));
     const rawBaseAmount = round2(parseNumericInput(req.body.baseAmount, NaN));
+    const rawPrincipalAmount = round2(parseNumericInput(req.body.principalAmount, NaN));
+    const rawInterestAmount = round2(parseNumericInput(req.body.interestAmount, NaN));
     const rawLateFeeAmount = round2(parseNumericInput(req.body.lateFeeAmount, NaN));
     const hasSplitRequest = Number.isFinite(rawBaseAmount) || Number.isFinite(rawLateFeeAmount);
+    const hasInterestOnlySplitRequest = Number.isFinite(rawPrincipalAmount) || Number.isFinite(rawInterestAmount) || Number.isFinite(rawLateFeeAmount) || Number.isFinite(rawBaseAmount);
     let baseRequested = Number.isFinite(rawBaseAmount) ? Math.max(rawBaseAmount, 0) : 0;
+    let principalRequested = Number.isFinite(rawPrincipalAmount)
+      ? Math.max(rawPrincipalAmount, 0)
+      : (Number.isFinite(rawBaseAmount) ? Math.max(rawBaseAmount, 0) : 0);
+    let interestRequested = Number.isFinite(rawInterestAmount) ? Math.max(rawInterestAmount, 0) : 0;
     let lateFeeRequested = Number.isFinite(rawLateFeeAmount) ? Math.max(rawLateFeeAmount, 0) : 0;
-    let amount = hasSplitRequest ? round2(baseRequested + lateFeeRequested) : rawAmount;
+    let amount = hasInterestOnlySplitRequest
+      ? round2(principalRequested + interestRequested + lateFeeRequested)
+      : rawAmount;
     const method = String(req.body.method || "").trim();
     const note = String(req.body.note || "").trim();
 
@@ -5025,10 +5726,10 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
       .eq("tenant_id", req.user.tenantId)
       .maybeSingle();
 
-    // Check rate mode separately
+    // Check optional loan columns separately
     const { data: modeResult } = await supabase
       .from("loans")
-      .select("interest_rate_mode")
+      .select("interest_rate_mode,payment_model,principal_outstanding")
       .eq("id", loanId)
       .eq("tenant_id", req.user.tenantId)
       .maybeSingle();
@@ -5049,9 +5750,11 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
       principal: Number(loanRow.principal || 0),
       interestRate: Number(loanRow.interest_rate || 0),
       interestRateMode: modeResult && modeResult.interest_rate_mode === "monthly" ? "monthly" : "annual",
+      paymentModel: normalizePaymentModel(modeResult?.payment_model),
       termMonths: Number(loanRow.term_months || 0),
       startDate: loanRow.start_date,
       paidAmount: Number(loanRow.paid_amount || 0),
+      principalOutstanding: Number.isFinite(Number(modeResult?.principal_outstanding)) ? Number(modeResult.principal_outstanding) : null,
       status: loanRow.status || "active"
     };
 
@@ -5083,6 +5786,152 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
     const referenceDate = startOfDay(toDate(date));
     if (Number.isNaN(referenceDate.getTime())) {
       return res.status(400).json({ message: "Fecha de pago invalida" });
+    }
+
+    const mappedPayments = (existingPayments || []).map((paymentRow) => mapPaymentRow({
+      ...paymentRow,
+      tenant_id: req.user.tenantId,
+      loan_id: loan.id,
+      customer_id: loan.customerId
+    }));
+
+    if (isInterestOnlyBalloonLoan(loan)) {
+      const snapshotBefore = interestOnlySnapshotAtDate(loan, loanSettings, mappedPayments, referenceDate);
+      if (!snapshotBefore) {
+        return res.status(400).json({ message: "No se pudo calcular el estado del prestamo para aplicar el pago." });
+      }
+
+      const principalOutstanding = Math.max(round2(snapshotBefore.principalOutstanding), 0);
+      const interestDue = Math.max(round2(snapshotBefore.interestOutstanding), 0);
+      const interestLateFeeDue = Math.max(round2(snapshotBefore.interestLateFeeOutstanding || 0), 0);
+      const principalLateFeeDue = Math.max(round2(snapshotBefore.principalLateFeeOutstanding || 0), 0);
+      const lateFeeDue = Math.max(round2(snapshotBefore.lateFeeOutstanding), 0);
+      const maturityPrincipalDue = Math.max(round2(snapshotBefore.maturityPrincipalDue), 0);
+
+      if (!hasInterestOnlySplitRequest) {
+        let remaining = Math.max(round2(amount), 0);
+        lateFeeRequested = round2(Math.min(remaining, lateFeeDue));
+        remaining = round2(remaining - lateFeeRequested);
+        interestRequested = round2(Math.min(remaining, interestDue));
+        remaining = round2(remaining - interestRequested);
+        principalRequested = round2(Math.min(remaining, principalOutstanding));
+      } else {
+        amount = round2(principalRequested + interestRequested + lateFeeRequested);
+      }
+
+      if (interestRequested > interestDue + 0.01) {
+        return res.status(400).json({ message: `El interes excede el pendiente de intereses vencidos (${interestDue.toFixed(2)}).` });
+      }
+
+      if (lateFeeRequested > lateFeeDue + 0.01) {
+        return res.status(400).json({ message: `La mora excede el pendiente de mora (${lateFeeDue.toFixed(2)}).` });
+      }
+
+      if (principalRequested > principalOutstanding + 0.01) {
+        return res.status(400).json({ message: `El abono a capital excede el capital pendiente (${principalOutstanding.toFixed(2)}).` });
+      }
+
+      amount = round2(principalRequested + interestRequested + lateFeeRequested);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return res.status(400).json({ message: "El pago no tiene monto aplicable" });
+      }
+
+      const principalApplied = round2(Math.min(principalRequested, principalOutstanding));
+      const interestApplied = round2(Math.min(interestRequested, interestDue));
+      const lateFeeApplied = round2(Math.min(lateFeeRequested, lateFeeDue));
+      const targetPrincipalOutstanding = Math.max(round2(principalOutstanding - principalApplied), 0);
+      const targetPaidAmount = round2(Math.max(Number(loan.principal || 0) - targetPrincipalOutstanding, 0));
+
+      const paymentMeta = {
+        v: 1,
+        alloc: {
+          paymentModel: PAYMENT_MODEL_INTEREST_ONLY_BALLOON,
+          baseAmount: principalApplied,
+          principalAmount: principalApplied,
+          interestAmount: interestApplied,
+          lateFeeAmount: lateFeeApplied
+        }
+      };
+      const storedNote = encodePaymentMeta(note, paymentMeta);
+
+      const payment = {
+        id: `PAY-${numericId()}`,
+        tenantId: req.user.tenantId,
+        loanId: loan.id,
+        customerId: loan.customerId,
+        date,
+        amount,
+        method,
+        note,
+        baseAmount: principalApplied,
+        principalAmount: principalApplied,
+        interestAmount: interestApplied,
+        lateFeeAmount: lateFeeApplied,
+        paymentModel: PAYMENT_MODEL_INTEREST_ONLY_BALLOON
+      };
+
+      const { error } = await supabase.from("payments").insert([
+        {
+          id: payment.id,
+          tenant_id: payment.tenantId,
+          loan_id: payment.loanId,
+          customer_id: payment.customerId,
+          date: payment.date,
+          amount: payment.amount,
+          method: payment.method,
+          note: storedNote
+        }
+      ]);
+
+      if (error) {
+        throw error;
+      }
+
+      const syncPayload = {
+        paid_amount: targetPaidAmount,
+        status: targetPrincipalOutstanding <= 0.5 ? "paid" : loan.status
+      };
+
+      let syncResult = await supabase
+        .from("loans")
+        .update({
+          ...syncPayload,
+          principal_outstanding: targetPrincipalOutstanding
+        })
+        .eq("id", loan.id)
+        .eq("tenant_id", req.user.tenantId);
+
+      if (syncResult.error) {
+        syncResult = await supabase
+          .from("loans")
+          .update(syncPayload)
+          .eq("id", loan.id)
+          .eq("tenant_id", req.user.tenantId);
+      }
+
+      if (syncResult.error) {
+        throw syncResult.error;
+      }
+
+      return res.status(201).json({
+        payment,
+        allocation: {
+          paymentModel: PAYMENT_MODEL_INTEREST_ONLY_BALLOON,
+          principalOutstandingBefore: principalOutstanding,
+          principalOutstandingAfter: targetPrincipalOutstanding,
+          interestDueBefore: interestDue,
+          interestLateFeeDueBefore: interestLateFeeDue,
+          principalLateFeeDueBefore: principalLateFeeDue,
+          lateFeeDueBefore: lateFeeDue,
+          maturityPrincipalDueBefore: maturityPrincipalDue,
+          principalRequested,
+          interestRequested,
+          lateFeeRequested,
+          principalApplied,
+          interestApplied,
+          lateFeeApplied
+        }
+      });
     }
 
     const penaltyBefore = loanPenaltySnapshotAtDate(loan, loanSettings, existingPayments || [], referenceDate);
@@ -5139,7 +5988,10 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
     const paymentMeta = {
       v: 1,
       alloc: {
+        paymentModel: PAYMENT_MODEL_LEGACY,
         baseAmount: baseApplied,
+        principalAmount: baseApplied,
+        interestAmount: 0,
         lateFeeAmount: lateFeeApplied
       },
       penalty: {
@@ -5210,6 +6062,7 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
     return res.status(201).json({
       payment,
       allocation: {
+        paymentModel: PAYMENT_MODEL_LEGACY,
         totalDueBefore: totalDue,
         outstandingBefore: outstanding,
         lateFeeDueBefore: lateFeeDue,

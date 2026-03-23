@@ -106,6 +106,13 @@ const finalEnv = {
   CORS_ORIGIN: envConfig.expectedCorsOrigin
 };
 
+const RESERVED_CLOUD_RUN_ENV_KEYS = new Set(["PORT"]);
+for (const key of RESERVED_CLOUD_RUN_ENV_KEYS) {
+  if (Object.prototype.hasOwnProperty.call(finalEnv, key)) {
+    delete finalEnv[key];
+  }
+}
+
 const tempEnvFile = path.join(os.tmpdir(), `credisync-${environmentName}-cloud-run-env-${Date.now()}.yaml`);
 
 const toYamlScalar = (value) => JSON.stringify(String(value ?? ""));
@@ -130,6 +137,8 @@ const deployArgs = [
   "--project",
   envConfig.project,
   "--allow-unauthenticated",
+  "--set-build-env-vars",
+  "GOOGLE_NODE_RUN_SCRIPTS=",
   "--env-vars-file",
   tempEnvFile
 ];

@@ -93,7 +93,33 @@ export function startOfDay(date) {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+export function normalizePaymentModel(value) {
+    return String(value || '').trim().toLowerCase() === 'interest_only_balloon'
+        ? 'interest_only_balloon'
+        : 'legacy_add_on';
+}
+
+export function isInterestOnlyBalloonLoan(loan) {
+    return normalizePaymentModel(loan?.paymentModel) === 'interest_only_balloon';
+}
+
+function monthRateForLoan(loan) {
+    const annualizedRate = Math.max(Number(loan?.interestRate || 0), 0) / 100;
+    return loan?.interestRateMode === 'monthly' ? annualizedRate : (annualizedRate / 12);
+}
+
+function principalOutstandingForLoan(loan) {
+    const explicit = Number(loan?.principalOutstanding);
+    if (Number.isFinite(explicit)) {
+        return Math.max(round2(explicit), 0);
+    }
+    return Math.max(round2(Number(loan?.principal || 0) - Number(loan?.paidAmount || 0)), 0);
+}
+
 export function loanTotalPayable(loan) {
+    if (isInterestOnlyBalloonLoan(loan)) {
+        return round2(Number(loan?.principal || 0));
+    }
     if (loan.interestRateMode === 'monthly') {
         return round2(loan.principal * (1 + (loan.interestRate / 100) * loan.termMonths));
     }
@@ -101,10 +127,16 @@ export function loanTotalPayable(loan) {
 }
 
 export function loanInstallment(loan) {
+    if (isInterestOnlyBalloonLoan(loan)) {
+        return round2(principalOutstandingForLoan(loan) * monthRateForLoan(loan));
+    }
     return round2(loanTotalPayable(loan) / loan.termMonths);
 }
 
 export function loanOutstanding(loan) {
+    if (isInterestOnlyBalloonLoan(loan)) {
+        return principalOutstandingForLoan(loan);
+    }
     return Math.max(round2(loanTotalPayable(loan) - (loan.paidAmount || 0)), 0);
 }
 
@@ -132,6 +164,13 @@ export function paymentBreakdown(loan, paymentAmount) {
 }
 
 export function loanNextDueDate(loan) {
+    if (isInterestOnlyBalloonLoan(loan)) {
+        if (loan?.nextDueDate) {
+            return toDate(loan.nextDueDate);
+        }
+        const maturity = loanMaturityDate(loan);
+        return Number.isNaN(maturity.getTime()) ? null : maturity;
+    }
     if (!loan || loanOutstanding(loan) <= 0.5) return null;
     const paidInstallments = Math.min(loan.termMonths, Math.floor((loan.paidAmount || 0) / loanInstallment(loan)));
     const date = toDate(loan.startDate);
@@ -181,6 +220,9 @@ export function loanMaturityDate(loan) {
 }
 
 export function loanCapitalCommitted(loan) {
+    if (isInterestOnlyBalloonLoan(loan)) {
+        return principalOutstandingForLoan(loan);
+    }
     return Math.max(round2(Number(loan.principal || 0) - Number(loan.paidAmount || 0)), 0);
 }
 
@@ -203,11 +245,17 @@ export function capitalUsagePct(state) {
 }
 
 export function daysOverdue(loan, state) {
+    if (isInterestOnlyBalloonLoan(loan) && Number.isFinite(Number(loan?.overdueDays))) {
+        return Math.max(Number(loan.overdueDays), 0);
+    }
     const grace = Number(state?.settings?.graceDays) || 0;
     return daysOverdueAtDate(loan, grace, new Date());
 }
 
 export function loanLateFeeAccrued(loan, state, referenceDate = new Date()) {
+    if (isInterestOnlyBalloonLoan(loan) && Number.isFinite(Number(loan?.lateFeeOutstanding))) {
+        return Math.max(round2(Number(loan.lateFeeOutstanding)), 0);
+    }
     const rateDaily = Math.max(Number(state?.settings?.latePenaltyRate) || 0, 0) / 100;
     if (!loan || rateDaily <= 0) return 0;
     const overdueDays = daysOverdueAtDate(loan, Number(state?.settings?.graceDays) || 0, referenceDate);
@@ -264,6 +312,9 @@ export function loanLateFeePaid(loan, state) {
 }
 
 export function loanLateFeeOutstanding(loan, state, referenceDate = new Date()) {
+    if (isInterestOnlyBalloonLoan(loan) && Number.isFinite(Number(loan?.lateFeeOutstanding))) {
+        return Math.max(round2(Number(loan.lateFeeOutstanding)), 0);
+    }
     const accrued = loanLateFeeAccrued(loan, state, referenceDate);
     const snapshot = latestPenaltySnapshotForLoan(loan, state);
     const installmentNumber = loanInstallmentNumber(loan);
@@ -276,6 +327,9 @@ export function loanLateFeeOutstanding(loan, state, referenceDate = new Date()) 
 }
 
 export function loanOutstandingWithPenalty(loan, state, referenceDate = new Date()) {
+    if (isInterestOnlyBalloonLoan(loan) && Number.isFinite(Number(loan?.totalOutstanding))) {
+        return Math.max(round2(Number(loan.totalOutstanding)), 0);
+    }
     return round2(loanOutstanding(loan) + loanLateFeeOutstanding(loan, state, referenceDate));
 }
 

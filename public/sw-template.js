@@ -1,4 +1,4 @@
-const BUILD_VERSION = '20260323124202550-go0uyi';
+const BUILD_VERSION = '__SW_VERSION__';
 const CACHE_NAME = `credisync-shell-${BUILD_VERSION}`;
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest'];
 

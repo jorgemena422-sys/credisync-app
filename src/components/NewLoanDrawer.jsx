@@ -39,6 +39,7 @@ export default function NewLoanDrawer({ isOpen, onClose }) {
         principal: '',
         interestRate: currentRate,
         interestRateMode: 'annual',
+        paymentModel: 'interest_only_balloon',
         termMonths: '',
         startDate: isoToday(),
         type: 'personal'
@@ -92,7 +93,7 @@ export default function NewLoanDrawer({ isOpen, onClose }) {
             const resetRate = getRateForLoanType(state.settings, 'personal');
             rateManuallyEdited.current = false;
             setFormData({
-                customerId: '', principal: '', interestRate: resetRate, interestRateMode: 'annual', termMonths: '', startDate: isoToday(), type: 'personal'
+                customerId: '', principal: '', interestRate: resetRate, interestRateMode: 'annual', paymentModel: 'interest_only_balloon', termMonths: '', startDate: isoToday(), type: 'personal'
             });
             await bootstrapState();
             onClose();
@@ -177,6 +178,22 @@ export default function NewLoanDrawer({ isOpen, onClose }) {
                                 <option value="mortgage">Hipotecario</option>
                                 <option value="auto">Vehicular</option>
                             </select>
+                        </div>
+
+                        <div className="form-group">
+                            <label>Modelo de cobro</label>
+                            <select
+                                value={formData.paymentModel}
+                                onChange={e => setFormData({ ...formData, paymentModel: e.target.value })}
+                            >
+                                <option value="interest_only_balloon">Interes mensual + capital al vencimiento</option>
+                                <option value="legacy_add_on">Cuota fija (legacy)</option>
+                            </select>
+                            <small className="muted" style={{ display: 'block', marginTop: '0.25rem' }}>
+                                {formData.paymentModel === 'interest_only_balloon'
+                                    ? 'Cada mes exige interes del periodo; capital se abona aparte o al vencimiento final.'
+                                    : 'Modelo anterior: total fijo dividido en cuotas.'}
+                            </small>
                         </div>
 
                         <div className="form-group">

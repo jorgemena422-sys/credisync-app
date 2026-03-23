@@ -26,6 +26,7 @@ import SuperadminAuditIndex from './pages/SuperadminAuditIndex';
 import SuperadminSettings from './pages/SuperadminSettings';
 import SuperadminAudit from './pages/SuperadminAudit';
 import Layout from './components/Layout';
+import AppUpdateBanner from './components/AppUpdateBanner';
 
 const AppRoutes = () => {
     const { currentUser, isSuperadmin } = useAuth();
@@ -86,6 +87,7 @@ const AppRoutes = () => {
 export default function App() {
     return (
         <ToastProvider>
+            <AppUpdateBanner />
             <AppRoutes />
         </ToastProvider>
     );

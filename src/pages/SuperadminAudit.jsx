@@ -234,7 +234,7 @@ export default function SuperadminAudit() {
                                     <td data-label="Monto">{money(loan.principal)}</td>
                                     <td data-label="Inicio">{formatDate(loan.startDate)}</td>
                                     <td data-label="Pagado">{money(loan.paidAmount)}</td>
-                                    <td data-label="Estado">{statusTag(loan.status)}</td>
+                                    <td data-label="Estado">{statusTag(loan.status, 'loan')}</td>
                                 </tr>
                             )) : (
                                 <tr className="empty-row"><td colSpan="6"><div className="empty-state compact-empty-state"><h4>Sin prestamos</h4></div></td></tr>

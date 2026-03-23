@@ -4,15 +4,24 @@ import { money, loanNextDueDate, loanPendingInstallments, loanOutstanding, loanI
 import { Link } from 'react-router-dom';
 import { useDrawer } from '../context/DrawerContext';
 
-export function statusTag(status) {
-    const map = {
+export function statusTag(status, scope = 'default') {
+    const normalizedStatus = String(status || '').toLowerCase();
+    const defaultMap = {
         active: 'Activo',
         inactive: 'Inactivo',
         pending: 'Pendiente',
         overdue: 'Vencido',
         paid: 'Pagado'
     };
-    return <span className={`status status-${status}`}>{map[status] || '-'}</span>;
+    const loanMap = {
+        ...defaultMap,
+        active: 'Al dia',
+        pending: 'Atraso',
+        overdue: 'Atraso',
+        paid: 'Saldado'
+    };
+    const map = scope === 'loan' ? loanMap : defaultMap;
+    return <span className={`status status-${normalizedStatus}`}>{map[normalizedStatus] || '-'}</span>;
 }
 
 function kpiIcon(label) {
@@ -296,11 +305,11 @@ export default function Dashboard() {
                     <div className="dashboard-ops-grid">
                         <div className="dashboard-ops-stat">
                             <span className="dashboard-ops-value">{activeCount}</span>
-                            <span className="dashboard-ops-label">Préstamos activos</span>
+                            <span className="dashboard-ops-label">Prestamos al dia</span>
                         </div>
                         <div className="dashboard-ops-stat dashboard-ops-stat-warn">
                             <span className="dashboard-ops-value">{overdueCount}</span>
-                            <span className="dashboard-ops-label">Préstamos vencidos</span>
+                            <span className="dashboard-ops-label">Prestamos en atraso</span>
                         </div>
                         <div className="dashboard-ops-stat">
                             <span className="dashboard-ops-value">{state.customers.length}</span>
@@ -359,7 +368,7 @@ export default function Dashboard() {
                                         <td data-label="Cliente">{customer ? customer.name : 'Sin cliente'}</td>
                                         <td data-label="Proximo pago">{formatDate(loanNextDueDate(loan))}</td>
                                         <td data-label="Saldo">{money(loanOutstanding(loan))}</td>
-                                        <td data-label="Estado">{statusTag(loan.status)}</td>
+                                        <td data-label="Estado">{statusTag(loan.status, 'loan')}</td>
                                         <td data-label="Accion">
                                             <Link to={`/loans?id=${loan.id}`} className="action-link">Ver</Link>
                                         </td>

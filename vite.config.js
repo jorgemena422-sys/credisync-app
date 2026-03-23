@@ -11,6 +11,25 @@ const apiProxy = {
 export default defineConfig({
   cacheDir: ".vite-cache",
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+
+          if (id.includes("@supabase/")) {
+            return "supabase-vendor";
+          }
+
+          if (id.includes("react-dom") || id.includes("react")) {
+            return "react-vendor";
+          }
+
+          return "vendor";
+        }
+      }
+    }
+  },
   server: {
     port: 5173,
     proxy: apiProxy
