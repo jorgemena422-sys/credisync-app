@@ -1,85 +1,140 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { useDrawer } from '../context/DrawerContext';
+import { useApp } from '../context/AppContext';
 
-export const Badge = ({ type = 'info', text }) => (
-  <span className={`badge badge-${type}`}>{text}</span>
-);
+function pageTitle(pathname, isSuperAdmin) {
+    const path = String(pathname || '').toLowerCase();
 
-const Layout = ({ children }) => {
-  const { user, isSuperAdmin, logout } = useAuth();
-  const { openLoanDrawer, openPaymentDrawer } = useDrawer();
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [isSidebarOpen, setSidebarOpen] = useState(false);
+    if (isSuperAdmin) {
+        if (path.startsWith('/superadmin/summary')) return 'Centro';
+        if (path.startsWith('/superadmin/users')) return 'Usuarios';
+        if (path.startsWith('/superadmin/tenants')) return 'Tenants';
+        if (path.startsWith('/superadmin/subscriptions')) return 'Suscripciones';
+        if (path.startsWith('/notifications')) return 'Notificaciones';
+        if (path.startsWith('/superadmin/plans')) return 'Planes';
+        if (path.startsWith('/superadmin/audit')) return 'Auditoria';
+        if (path.startsWith('/superadmin/settings')) return 'Configuracion';
+        return 'Superadmin';
+    }
 
-  const getPageTitle = () => {
-    const path = location.pathname;
-    if (path === '/') return 'Dashboard';
-    if (path.startsWith('/loans')) return 'Préstamos';
+    if (path.startsWith('/dashboard')) return 'Dashboard';
+    if (path.startsWith('/loans')) return 'Prestamos';
     if (path.startsWith('/customers')) return 'Clientes';
-    if (path.startsWith('/payments')) return 'Pagos y Cobros';
+    if (path.startsWith('/payments')) return 'Cobros';
     if (path.startsWith('/notifications')) return 'Notificaciones';
-    if (path.startsWith('/settings')) return 'Configuración';
+    if (path.startsWith('/reports')) return 'Reportes';
+    if (path.startsWith('/settings')) return 'Configuracion';
     return 'CrediSync';
-  };
+}
 
-  const navItems = [
-    { path: '/', label: 'Dashboard', icon: 'dashboard' },
-    { path: '/loans', label: 'Préstamos', icon: 'payments' },
-    { path: '/customers', label: 'Clientes', icon: 'people' },
-    { path: '/payments', label: 'Cobros', icon: 'account_balance_wallet' },
-    { path: '/notifications', label: 'Alertas', icon: 'notifications' }
-  ];
+export default function Layout({ children, hideNavigation = false }) {
+    const { currentUser, isSuperadmin, logout } = useAuth();
+    const { state } = useApp();
+    const location = useLocation();
+    const navigate = useNavigate();
+    const isSuperAdmin = isSuperadmin();
 
-  return (
-    <div className="app-container">
-      {/* Topbar */}
-      <header className="topbar">
-        <div className="topbar-left">
-          <button className="menu-btn mobile-only" onClick={() => setSidebarOpen(true)}>
-            <span className="material-icons">menu</span>
-          </button>
-          <h1>{getPageTitle()}</h1>
+    const displayName = useMemo(() => {
+        return currentUser?.name || currentUser?.full_name || currentUser?.email || 'Usuario';
+    }, [currentUser]);
+
+    const userRoleLabel = isSuperAdmin ? 'Superadmin' : 'Administrador';
+
+    const tenantNavItems = [
+        { path: '/dashboard', label: 'Inicio', icon: 'dashboard' },
+        { path: '/loans', label: 'Prestamos', icon: 'payments' },
+        { path: '/customers', label: 'Clientes', icon: 'groups' },
+        { path: '/payments', label: 'Cobros', icon: 'point_of_sale' },
+        { path: '/settings', label: 'Ajustes', icon: 'settings' }
+    ];
+
+    const superadminNavItems = [
+        { path: '/superadmin/summary', label: 'Centro', icon: 'space_dashboard' },
+        { path: '/superadmin/subscriptions', label: 'Cobros', icon: 'payments' },
+        { path: '/superadmin/tenants', label: 'Tenants', icon: 'apartment' },
+        { path: '/superadmin/settings', label: 'Ajustes', icon: 'tune' }
+    ];
+
+    const navItems = hideNavigation ? [] : (isSuperAdmin ? superadminNavItems : tenantNavItems);
+
+    const unreadCount = useMemo(() => {
+        return (state.notifications || []).filter((item) => {
+            const status = String(item?.status || '').toLowerCase();
+            return status !== 'read' && item?.is_read !== true;
+        }).length;
+    }, [state.notifications]);
+
+    const normalizedPlanName = String(currentUser?.planName || state?.subscription?.planName || '').trim();
+
+    return (
+        <div className="app-layout">
+            <header className="topbar">
+                <div className="topbar-brand">
+                    <div className="logo-sm">CS</div>
+                    <div>
+                        <p className="eyebrow">CrediSync</p>
+                        <h2>{pageTitle(location.pathname, isSuperAdmin)}</h2>
+                    </div>
+                </div>
+
+                <div className="topbar-right">
+                    <button
+                        type="button"
+                        className="topbar-alert-btn"
+                        onClick={() => navigate('/notifications')}
+                        aria-label="Ver notificaciones"
+                        title="Notificaciones"
+                    >
+                        <span className="material-symbols-outlined">notifications</span>
+                        {unreadCount > 0 && (
+                            <span className="topbar-alert-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+                        )}
+                    </button>
+
+                    <div className="user-chip">
+                        <div className="user-avatar">
+                            <span className="material-symbols-outlined">person</span>
+                        </div>
+                        <div className="user-info">
+                            <span>{displayName}</span>
+                            <small>{userRoleLabel}</small>
+                            {!isSuperAdmin && normalizedPlanName ? (
+                                <span className="user-plan-badge">{normalizedPlanName}</span>
+                            ) : null}
+                        </div>
+                    </div>
+
+                    <button
+                        type="button"
+                        className="topbar-alert-btn"
+                        onClick={logout}
+                        aria-label="Cerrar sesion"
+                        title="Cerrar sesion"
+                    >
+                        <span className="material-symbols-outlined">logout</span>
+                    </button>
+                </div>
+            </header>
+
+            <main className="content">{children}</main>
+
+            {!hideNavigation && (
+                <nav className="dockbar" aria-label="Navegacion principal">
+                    <div className="dockbar-nav">
+                        {navItems.map((item) => (
+                            <NavLink
+                                key={item.path}
+                                to={item.path}
+                                className={({ isActive }) => `dock-item ${isActive ? 'active' : ''}`}
+                            >
+                                <span className="material-symbols-outlined">{item.icon}</span>
+                                <span className="dock-label">{item.label}</span>
+                            </NavLink>
+                        ))}
+                    </div>
+                </nav>
+            )}
         </div>
-        <div className="topbar-right">
-          {user?.subscription_days_left <= 3 && (
-            <Badge type="warning" text={`Plan expira en ${user.subscription_days_left} días`} />
-          )}
-          <div className="user-profile">
-            <span className="user-name">{user?.full_name}</span>
-            {isSuperAdmin && <Badge type="primary" text="Admin" />}
-          </div>
-          <button className="logout-btn" onClick={logout}>
-            <span className="material-icons text-ruby">logout</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="main-content">
-        {children}
-      </main>
-
-      {/* Bottom Nav (Mobile) */}
-      <nav className="bottom-nav">
-        {navItems.map(item => (
-          <NavLink key={item.path} to={item.path} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-            <span className="material-icons">{item.icon}</span>
-            <span className="nav-label">{item.label}</span>
-          </NavLink>
-        ))}
-      </nav>
-
-      {/* Quick Action Button */}
-      <div className="fab-container">
-        <button className="fab" onClick={openLoanDrawer}>
-          <span className="material-icons">add</span>
-        </button>
-      </div>
-    </div>
-  );
-};
-
-export default Layout;
+    );
+}

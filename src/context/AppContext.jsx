@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { apiRequest } from '../utils/api';
+import { setCurrency } from '../utils/helpers';
 import { useAuth } from './AuthContext';
 
 const AppContext = createContext(null);
@@ -15,7 +16,8 @@ export function defaultSettings() {
         graceDays: 3,
         autoApprovalScore: 720,
         maxDebtToIncome: 40,
-        capitalBudget: 0
+        capitalBudget: 0,
+        currency: 'DOP'
     };
 }
 
@@ -43,13 +45,13 @@ export function defaultSubscription() {
         id: '',
         tenantId: '',
         planId: '',
-        planCode: 'starter',
-        planName: 'Starter',
-        description: '',
-        status: 'trial',
+        planCode: 'credisync_monthly',
+        planName: 'CrediSync Mensual',
+        description: 'Suscripcion mensual con acceso completo a todas las funciones.',
+        status: 'active',
         billingCycle: 'monthly',
         priceMonthly: 0,
-        currency: 'USD',
+        currency: 'DOP',
         currentPeriodStart: '',
         currentPeriodEnd: '',
         nextBillingDate: '',
@@ -60,14 +62,14 @@ export function defaultSubscription() {
         features: {
             calendarIcsEnabled: true,
             advancedReportsEnabled: true,
-            exportsEnabled: false,
-            brandingEnabled: false,
-            prioritySupport: false
+            exportsEnabled: true,
+            brandingEnabled: true,
+            prioritySupport: true
         },
         limits: {
-            maxUsers: 1,
-            maxCustomers: 100,
-            maxActiveLoans: 150
+            maxUsers: 100000,
+            maxCustomers: 1000000,
+            maxActiveLoans: 1000000
         },
         usage: {
             users: 0,
@@ -99,7 +101,7 @@ function normalizeSubscriptionSnapshot(source, fallback) {
             ...(base.usage || {}),
             ...((incoming && incoming.usage) || {})
         },
-        isReadOnly: ['suspended', 'cancelled'].includes(String((incoming && incoming.status) || '').toLowerCase())
+        isReadOnly: String((incoming && incoming.status) || '').toLowerCase() === 'suspended'
     };
 }
 
@@ -119,6 +121,8 @@ export const AppProvider = ({ children }) => {
     });
 
     const [superadminUsers, setSuperadminUsers] = useState([]);
+    const [isBootstrapping, setIsBootstrapping] = useState(false);
+    const [hasBootstrapped, setHasBootstrapped] = useState(false);
 
     const refreshTenantSubscription = useCallback(async () => {
         if (!currentUser || isSuperadmin()) {
@@ -150,7 +154,24 @@ export const AppProvider = ({ children }) => {
         return users;
     }, [isSuperadmin]);
 
-    const bootstrapState = useCallback(async () => {
+    const applyTenantSettings = useCallback((settingsPatch) => {
+        setState((prev) => ({
+            ...prev,
+            settings: {
+                ...defaultSettings(),
+                ...(prev.settings || {}),
+                ...((settingsPatch && typeof settingsPatch === 'object') ? settingsPatch : {})
+            }
+        }));
+    }, []);
+
+    const bootstrapState = useCallback(async (options = {}) => {
+        const silent = Boolean(options && options.silent);
+
+        if (!silent) {
+            setIsBootstrapping(true);
+        }
+
         try {
             const response = await apiRequest('/bootstrap');
             const fallbackState = {
@@ -195,6 +216,11 @@ export const AppProvider = ({ children }) => {
             }
         } catch (error) {
             console.error(error);
+        } finally {
+            setHasBootstrapped(true);
+            if (!silent) {
+                setIsBootstrapping(false);
+            }
         }
     }, [isSuperadmin, refreshSuperadminUsers]);
 
@@ -203,6 +229,16 @@ export const AppProvider = ({ children }) => {
             bootstrapState();
         }
     }, [currentUser, bootstrapState]);
+
+    useEffect(() => {
+        if (!currentUser) {
+            setHasBootstrapped(false);
+        }
+    }, [currentUser]);
+
+    useEffect(() => {
+        setCurrency(state.settings?.currency || 'DOP');
+    }, [state.settings?.currency]);
 
     useEffect(() => {
         if (!currentUser || isSuperadmin()) {
@@ -231,11 +267,18 @@ export const AppProvider = ({ children }) => {
         };
     }, [currentUser, isSuperadmin, refreshTenantSubscription]);
 
-    return (
-        <AppContext.Provider value={{ state, setState, bootstrapState, superadminUsers, refreshSuperadminUsers }}>
-            {children}
-        </AppContext.Provider>
-    );
+    const contextValue = useMemo(() => ({
+        state,
+        setState,
+        applyTenantSettings,
+        bootstrapState,
+        superadminUsers,
+        refreshSuperadminUsers,
+        isBootstrapping,
+        hasBootstrapped
+    }), [state, applyTenantSettings, bootstrapState, superadminUsers, refreshSuperadminUsers, isBootstrapping, hasBootstrapped]);
+
+    return <AppContext.Provider value={contextValue}>{children}</AppContext.Provider>;
 };
 
 export const useApp = () => useContext(AppContext);

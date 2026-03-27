@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { applyAppUpdate, registerAppServiceWorker } from '../utils/serviceWorker';
 
 export default function AppUpdateBanner() {
+    const navigate = useNavigate();
     const [updateRegistration, setUpdateRegistration] = useState(null);
     const [isApplying, setIsApplying] = useState(false);
 
@@ -11,9 +13,14 @@ export default function AppUpdateBanner() {
             setIsApplying(false);
         },
         onOpenUrl: (url) => {
-            window.location.href = url;
+            try {
+                const nextUrl = new URL(String(url), window.location.origin);
+                navigate(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+            } catch {
+                window.location.href = url;
+            }
         }
-    }), []);
+    }), [navigate]);
 
     if (!updateRegistration?.waiting) {
         return null;

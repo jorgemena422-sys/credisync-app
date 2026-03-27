@@ -1,24 +1,172 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
+import { apiRequest } from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import { loanLateFeeOutstanding, loanOutstanding, loanOutstandingWithPenalty, money, formatDate, loanTotalPayable, loanInstallment, loanNextDueDate, loanMaturityDate, initials, round2 } from '../utils/helpers';
 import { statusTag } from './Dashboard';
 import { useDrawer } from '../context/DrawerContext';
+import { usePortfolioDerivedData } from '../hooks/usePortfolioDerivedData';
+import { isStagingRuntimeTarget } from '../utils/runtimeTarget';
 
 export default function Loans() {
-    const { state } = useApp();
+    const { state, setState, bootstrapState } = useApp();
     const { openDrawer } = useDrawer();
+    const { showToast } = useToast();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [query, setQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [selectedLoan, setSelectedLoan] = useState(null);
-    const readOnly = ['suspended', 'cancelled'].includes(String(state?.subscription?.status || '').toLowerCase());
+    const [editingLoan, setEditingLoan] = useState(null);
+    const [updatingLoan, setUpdatingLoan] = useState(false);
+    const readOnly = String(state?.subscription?.status || '').toLowerCase() === 'suspended';
+    const { customersById } = usePortfolioDerivedData(state);
 
-    const filteredLoans = state.loans.filter(loan => {
-        const customer = state.customers.find(c => c.id === loan.customerId);
-        const haystack = `${loan.id} ${loan.type} ${customer ? customer.name : ''}`.toLowerCase();
-        const matchesQuery = !query || haystack.includes(query.toLowerCase());
-        const matchesStatus = statusFilter === 'all' || loan.status === statusFilter;
-        return matchesQuery && matchesStatus;
-    });
+    const loanComputationState = useMemo(() => ({
+        payments: state.payments,
+        settings: state.settings
+    }), [state.payments, state.settings]);
+
+    const loanRows = useMemo(() => {
+        return (state.loans || []).map((loan) => {
+            const customer = customersById.get(loan.customerId) || null;
+            return {
+                loan,
+                customer,
+                searchKey: `${loan.id} ${loan.type} ${customer ? customer.name : ''}`.toLowerCase(),
+                outstanding: loanOutstandingWithPenalty(loan, loanComputationState)
+            };
+        });
+    }, [state.loans, customersById, loanComputationState]);
+
+    const filteredLoanRows = useMemo(() => {
+        const normalizedQuery = query.trim().toLowerCase();
+        return loanRows.filter(({ loan, searchKey }) => {
+            const matchesQuery = !normalizedQuery || searchKey.includes(normalizedQuery);
+            const matchesStatus = statusFilter === 'all' || loan.status === statusFilter;
+            return matchesQuery && matchesStatus;
+        });
+    }, [loanRows, query, statusFilter]);
+
+    const selectedLoanCustomer = useMemo(() => {
+        if (!selectedLoan) {
+            return null;
+        }
+        return customersById.get(selectedLoan.customerId) || null;
+    }, [selectedLoan, customersById]);
+
+    const selectedLoanPayments = useMemo(() => {
+        if (!selectedLoan) {
+            return [];
+        }
+        return (state.payments || []).filter((payment) => payment.loanId === selectedLoan.id);
+    }, [selectedLoan, state.payments]);
+
+    const deepLinkedLoanId = useMemo(
+        () => String(searchParams.get('loanId') || '').trim(),
+        [searchParams]
+    );
+
+    const requestedStatusFilter = useMemo(
+        () => String(searchParams.get('status') || '').trim().toLowerCase(),
+        [searchParams]
+    );
+
+    const syncLoanSearchParam = useCallback((loanId) => {
+        setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            if (loanId) {
+                next.set('loanId', String(loanId));
+            } else {
+                next.delete('loanId');
+            }
+            return next;
+        }, { replace: true });
+    }, [setSearchParams]);
+
+    const openLoanDetail = useCallback((loan) => {
+        if (!loan) {
+            return;
+        }
+
+        setSelectedLoan(loan);
+        syncLoanSearchParam(loan.id);
+    }, [syncLoanSearchParam]);
+
+    const closeLoanDetail = useCallback(() => {
+        setSelectedLoan(null);
+        syncLoanSearchParam('');
+    }, [syncLoanSearchParam]);
+
+    useEffect(() => {
+        if (!deepLinkedLoanId) {
+            setSelectedLoan((current) => (current ? null : current));
+            return;
+        }
+
+        const matchingLoan = (state.loans || []).find((loan) => String(loan.id) === deepLinkedLoanId);
+        if (!matchingLoan) {
+            return;
+        }
+
+        setSelectedLoan((current) => (
+            current?.id === matchingLoan.id ? current : matchingLoan
+        ));
+    }, [deepLinkedLoanId, state.loans]);
+
+    useEffect(() => {
+        if (['active', 'overdue', 'paid'].includes(requestedStatusFilter) && requestedStatusFilter !== statusFilter) {
+            setStatusFilter(requestedStatusFilter);
+        }
+    }, [requestedStatusFilter, statusFilter]);
+
+    const handleLoanUpdate = async (payload, originalLoan) => {
+        try {
+            setUpdatingLoan(true);
+            const response = await apiRequest(`/loans/${encodeURIComponent(originalLoan.id)}`, {
+                method: 'PUT',
+                body: payload
+            });
+
+            const updatedLoan = response?.loan || { ...originalLoan, ...payload };
+            const nextCustomerId = updatedLoan.customerId || payload.customerId || originalLoan.customerId;
+
+            if (isStagingRuntimeTarget) {
+                setState((prev) => ({
+                    ...prev,
+                    loans: (prev.loans || []).map((loan) => (
+                        loan.id === originalLoan.id ? { ...loan, ...updatedLoan } : loan
+                    )),
+                    payments: (prev.payments || []).map((payment) => (
+                        payment.loanId === originalLoan.id
+                            ? { ...payment, customerId: nextCustomerId }
+                            : payment
+                    )),
+                    paymentPromises: (prev.paymentPromises || []).map((promise) => (
+                        promise.loanId === originalLoan.id
+                            ? { ...promise, customerId: nextCustomerId }
+                            : promise
+                    )),
+                    collectionNotes: (prev.collectionNotes || []).map((note) => (
+                        note.loanId === originalLoan.id
+                            ? { ...note, customerId: nextCustomerId }
+                            : note
+                    ))
+                }));
+                bootstrapState({ silent: true }).catch(() => undefined);
+            } else {
+                await bootstrapState();
+            }
+
+            showToast('Prestamo actualizado correctamente');
+            setEditingLoan(null);
+            setSelectedLoan((current) => (current && current.id === originalLoan.id ? { ...current, ...updatedLoan } : current));
+        } catch (error) {
+            showToast(error.message || 'No se pudo actualizar el prestamo');
+        } finally {
+            setUpdatingLoan(false);
+        }
+    };
 
     return (
         <section id="view-loans" className="view">
@@ -26,7 +174,7 @@ export default function Loans() {
                 <div className="section-head split">
                     <h3>Cartera de prestamos</h3>
                     <div className="topbar-actions">
-                        <p className="muted small">{filteredLoans.length} de {state.loans.length} prestamos</p>
+                        <p className="muted small">{filteredLoanRows.length} de {state.loans.length} prestamos</p>
                         <button className="btn btn-primary" type="button" onClick={() => openDrawer('loan')} disabled={readOnly}>Nuevo prestamo</button>
                     </div>
                 </div>
@@ -54,36 +202,39 @@ export default function Loans() {
                                 <th>Monto</th>
                                 <th>Saldo</th>
                                 <th>Estado</th>
-                                <th>Accion</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredLoans.length > 0 ? (
-                                filteredLoans.map(loan => {
-                                    const customer = state.customers.find(c => c.id === loan.customerId);
+                            {filteredLoanRows.length > 0 ? (
+                                filteredLoanRows.map(({ loan, customer, outstanding }) => {
                                     return (
-                                        <tr key={loan.id} className="motion-item">
+                                        <tr
+                                            key={loan.id}
+                                            className="motion-item"
+                                            style={{ cursor: 'pointer' }}
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => openLoanDetail(loan)}
+                                            onKeyDown={(event) => {
+                                                if (event.key === 'Enter' || event.key === ' ') {
+                                                    event.preventDefault();
+                                                    openLoanDetail(loan);
+                                                }
+                                            }}
+                                            aria-label={`Abrir detalle del prestamo ${loan.id}`}
+                                        >
                                             <td data-label="ID">{loan.id}</td>
                                             <td data-label="Cliente">{customer ? customer.name : 'Sin cliente'}</td>
                                             <td data-label="Tipo">{loan.type}</td>
                                             <td data-label="Monto">{money(loan.principal)}</td>
-                                            <td data-label="Saldo">{money(loanOutstandingWithPenalty(loan, state))}</td>
+                                            <td data-label="Saldo">{money(outstanding)}</td>
                                             <td data-label="Estado">{statusTag(loan.status, 'loan')}</td>
-                                            <td data-label="Accion">
-                                                <button
-                                                    onClick={() => setSelectedLoan(loan)}
-                                                    className="action-link"
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, font: 'inherit' }}
-                                                >
-                                                    Detalle
-                                                </button>
-                                            </td>
                                         </tr>
                                     );
                                 })
                             ) : (
                                 <tr className="empty-row">
-                                    <td colSpan="7">
+                                    <td colSpan="6">
                                         <div className="empty-state">
                                             <span className="material-symbols-outlined">{query || statusFilter !== 'all' ? 'search_off' : 'add_card'}</span>
                                             <h4>{query || statusFilter !== 'all' ? 'Sin resultados' : 'Aun no hay prestamos'}</h4>
@@ -111,21 +262,37 @@ export default function Loans() {
                 <LoanDetailModal
                     loan={selectedLoan}
                     state={state}
-                    customer={state.customers.find(c => c.id === selectedLoan.customerId)}
-                    payments={state.payments.filter(p => p.loanId === selectedLoan.id)}
+                    customer={selectedLoanCustomer}
+                    payments={selectedLoanPayments}
                     readOnly={readOnly}
-                    onClose={() => setSelectedLoan(null)}
+                    onClose={closeLoanDetail}
                     onRegisterPayment={() => {
-                        setSelectedLoan(null);
+                        closeLoanDetail();
                         openDrawer('payment');
                     }}
+                    onEdit={(loanToEdit) => {
+                        closeLoanDetail();
+                        setEditingLoan(loanToEdit);
+                    }}
+                />
+            )}
+
+            {editingLoan && (
+                <LoanEditModal
+                    loan={editingLoan}
+                    customers={state.customers || []}
+                    payments={state.payments || []}
+                    readOnly={readOnly}
+                    loading={updatingLoan}
+                    onClose={() => setEditingLoan(null)}
+                    onSubmit={(payload) => handleLoanUpdate(payload, editingLoan)}
                 />
             )}
         </section>
     );
 }
 
-function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, onRegisterPayment }) {
+function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, onRegisterPayment, onEdit }) {
     const isInterestOnly = loan.paymentModel === 'interest_only_balloon';
     const totalPayable = loanTotalPayable(loan);
     const baseOutstanding = loanOutstanding(loan);
@@ -142,7 +309,7 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
     const installment = loanInstallment(loan);
     const nextDue = loanNextDueDate(loan);
     const maturity = loanMaturityDate(loan);
-    const paidInstallments = isInterestOnly
+    const periodNumber = isInterestOnly
         ? (() => {
             const start = new Date(`${loan.startDate}T00:00:00`);
             const now = new Date();
@@ -152,13 +319,13 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
         : Math.floor(loan.paidAmount / Math.max(installment, 0.01));
     const progressPercent = isInterestOnly
         ? (loan.principal > 0 ? ((loan.principal - baseOutstanding) / loan.principal) * 100 : 0)
-        : (loan.termMonths > 0 ? (paidInstallments / loan.termMonths) * 100 : 0);
-    const remainingInstallments = Math.max(loan.termMonths - paidInstallments, 0);
+        : (loan.termMonths > 0 ? (periodNumber / loan.termMonths) * 100 : 0);
+    const remainingPeriods = Math.max(loan.termMonths - periodNumber, 0);
     const orderedPayments = [...payments].sort((a, b) => new Date(b.date) - new Date(a.date));
 
     return (
         <div className="modal-overlay loan-detail-overlay" onClick={onClose}>
-            <div className="card loan-detail-modal" onClick={event => event.stopPropagation()}>
+            <div className="card loan-detail-modal loan-summary-modal" onClick={event => event.stopPropagation()}>
                 <div className="loan-detail-head">
                     <div className="loan-detail-title-block">
                         <div className="loan-detail-icon">$</div>
@@ -174,9 +341,6 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
                     </div>
 
                     <div className="loan-detail-head-actions">
-                        {loan.status !== 'paid' && (
-                            <button type="button" className="btn btn-primary" onClick={onRegisterPayment} disabled={readOnly}>Registrar pago</button>
-                        )}
                         <button type="button" className="loan-detail-close" onClick={onClose} aria-label="Cerrar detalle">
                             <span className="material-symbols-outlined">close</span>
                         </button>
@@ -219,6 +383,19 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
                     </div>
                 </section>
 
+                <div className="card section-stack loan-detail-panel loan-detail-actions-panel">
+                    <div className="section-head split">
+                        <h4>Acciones del prestamo</h4>
+                        <span className="muted small">Gestion directa</span>
+                    </div>
+                    <div className="action-group-inline">
+                        {loan.status !== 'paid' && (
+                            <button type="button" className="btn btn-primary" onClick={onRegisterPayment} disabled={readOnly}>Registrar pago</button>
+                        )}
+                        <button type="button" className="btn btn-bad" onClick={() => onEdit(loan)} disabled={readOnly}>Editar prestamo</button>
+                    </div>
+                </div>
+
                 <div className="loan-detail-grid">
                     <div className="loan-detail-column">
                         <div className="card section-stack loan-detail-panel">
@@ -259,12 +436,12 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
                                     <strong>{formatDate(maturity)}</strong>
                                 </div>
                                 <div className="metric">
-                                    <p>Cuotas cubiertas</p>
-                                    <strong>{paidInstallments} / {loan.termMonths}</strong>
+                                    <p>{isInterestOnly ? 'Periodo actual' : 'Cuotas cubiertas'}</p>
+                                    <strong>{isInterestOnly ? `${Math.max(periodNumber, 1)} / ${loan.termMonths}` : `${periodNumber} / ${loan.termMonths}`}</strong>
                                 </div>
                                 <div className="metric">
-                                    <p>Restantes</p>
-                                    <strong>{remainingInstallments}</strong>
+                                    <p>{isInterestOnly ? 'Periodos restantes' : 'Restantes'}</p>
+                                    <strong>{remainingPeriods}</strong>
                                 </div>
                             </div>
                         </div>
@@ -389,6 +566,189 @@ function LoanDetailModal({ loan, state, customer, payments, readOnly, onClose, o
                         <p className="small muted loan-detail-footnote">Se muestran los 6 pagos mas recientes. Quedan {payments.length - 6} registros adicionales.</p>
                     )}
                 </div>
+            </div>
+        </div>
+    );
+}
+
+function LoanEditModal({ loan, customers, payments, readOnly, loading, onClose, onSubmit }) {
+    const [formData, setFormData] = useState(() => ({
+        customerId: String(loan.customerId || ''),
+        principal: String(loan.principal ?? ''),
+        type: String(loan.type || 'personal'),
+        paymentModel: String(loan.paymentModel || 'legacy_add_on'),
+        interestRateMode: String(loan.interestRateMode || 'annual'),
+        interestRate: String(loan.interestRate ?? ''),
+        termMonths: String(loan.termMonths ?? ''),
+        startDate: String(loan.startDate || '')
+    }));
+
+    useEffect(() => {
+        setFormData({
+            customerId: String(loan.customerId || ''),
+            principal: String(loan.principal ?? ''),
+            type: String(loan.type || 'personal'),
+            paymentModel: String(loan.paymentModel || 'legacy_add_on'),
+            interestRateMode: String(loan.interestRateMode || 'annual'),
+            interestRate: String(loan.interestRate ?? ''),
+            termMonths: String(loan.termMonths ?? ''),
+            startDate: String(loan.startDate || '')
+        });
+    }, [loan]);
+
+    const hasPayments = useMemo(
+        () => (payments || []).some((payment) => payment.loanId === loan.id),
+        [payments, loan.id]
+    );
+
+    const submitEdit = async (event) => {
+        event.preventDefault();
+        await onSubmit({
+            customerId: formData.customerId,
+            principal: Number(formData.principal),
+            type: formData.type,
+            paymentModel: formData.paymentModel,
+            interestRateMode: formData.interestRateMode,
+            interestRate: Number(formData.interestRate),
+            termMonths: Number(formData.termMonths),
+            startDate: formData.startDate
+        });
+    };
+
+    return (
+        <div className="modal-overlay loan-detail-overlay" onClick={onClose}>
+            <div className="card loan-detail-modal" onClick={(event) => event.stopPropagation()}>
+                <div className="loan-detail-head">
+                    <div className="loan-detail-title-block">
+                        <div className="loan-detail-icon">E</div>
+                        <div>
+                            <p className="eyebrow">Edicion de credito</p>
+                            <h3>Editar prestamo #{loan.id}</h3>
+                            <div className="loan-detail-meta-row">
+                                <span className="muted small">Actualiza datos base del prestamo</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="loan-detail-head-actions">
+                        <button type="button" className="loan-detail-close" onClick={onClose} aria-label="Cerrar edicion">
+                            <span className="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+                </div>
+
+                <section className="drawer-panel drawer-section" style={{ marginTop: '0.4rem' }}>
+                    <form onSubmit={submitEdit} className="form-grid cols-2">
+                        <div className="form-group">
+                            <label>Cliente</label>
+                            <select
+                                required
+                                value={formData.customerId}
+                                onChange={(event) => setFormData((prev) => ({ ...prev, customerId: event.target.value }))}
+                            >
+                                <option value="" disabled>Selecciona un cliente</option>
+                                {customers.map((customer) => (
+                                    <option key={customer.id} value={customer.id}>{customer.name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="form-group">
+                            <label>Tipo</label>
+                            <select
+                                required
+                                value={formData.type}
+                                onChange={(event) => setFormData((prev) => ({ ...prev, type: event.target.value }))}
+                            >
+                                <option value="personal">Personal</option>
+                                <option value="business">Negocio</option>
+                                <option value="mortgage">Hipotecario</option>
+                                <option value="auto">Vehicular</option>
+                            </select>
+                        </div>
+
+                        <div className="form-group">
+                            <label>Monto original</label>
+                            <input
+                                type="number"
+                                required
+                                min="1"
+                                step="0.01"
+                                value={formData.principal}
+                                onChange={(event) => setFormData((prev) => ({ ...prev, principal: event.target.value }))}
+                            />
+                        </div>
+
+                        <div className="form-group">
+                            <label>Plazo (meses)</label>
+                            <input
+                                type="number"
+                                required
+                                min="1"
+                                step="1"
+                                value={formData.termMonths}
+                                onChange={(event) => setFormData((prev) => ({ ...prev, termMonths: event.target.value }))}
+                            />
+                        </div>
+
+                        <div className="form-group">
+                            <label>Tipo de tasa</label>
+                            <select
+                                value={formData.interestRateMode}
+                                onChange={(event) => setFormData((prev) => ({ ...prev, interestRateMode: event.target.value }))}
+                            >
+                                <option value="annual">Anual</option>
+                                <option value="monthly">Mensual</option>
+                            </select>
+                        </div>
+
+                        <div className="form-group">
+                            <label>Tasa de interes (%)</label>
+                            <input
+                                type="number"
+                                required
+                                min="0"
+                                step="0.01"
+                                value={formData.interestRate}
+                                onChange={(event) => setFormData((prev) => ({ ...prev, interestRate: event.target.value }))}
+                            />
+                        </div>
+
+                        <div className="form-group">
+                            <label>Modelo de cobro</label>
+                            <select
+                                value={formData.paymentModel}
+                                onChange={(event) => setFormData((prev) => ({ ...prev, paymentModel: event.target.value }))}
+                                disabled={hasPayments}
+                            >
+                                <option value="interest_only_balloon">Interes mensual + capital al vencimiento</option>
+                                <option value="legacy_add_on">Cuota fija (legacy)</option>
+                            </select>
+                            {hasPayments && (
+                                <small className="muted" style={{ display: 'block', marginTop: '0.25rem' }}>
+                                    No puedes cambiar el modelo cuando el prestamo ya tiene pagos registrados.
+                                </small>
+                            )}
+                        </div>
+
+                        <div className="form-group">
+                            <label>Fecha de inicio</label>
+                            <input
+                                type="date"
+                                required
+                                value={formData.startDate}
+                                onChange={(event) => setFormData((prev) => ({ ...prev, startDate: event.target.value }))}
+                            />
+                        </div>
+
+                        <div className="action-group-inline" style={{ gridColumn: '1 / -1' }}>
+                            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+                            <button type="submit" className="btn btn-primary" disabled={loading || readOnly}>
+                                {loading ? 'Guardando...' : 'Guardar cambios'}
+                            </button>
+                        </div>
+                    </form>
+                </section>
             </div>
         </div>
     );

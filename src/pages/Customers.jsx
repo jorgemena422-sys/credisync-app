@@ -1,31 +1,124 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { money, initials, formatDate, sum, loanOutstanding, customerRiskProfile } from '../utils/helpers';
 import { useDrawer } from '../context/DrawerContext';
 import { useToast } from '../context/ToastContext';
 import { apiRequest } from '../utils/api';
 import { statusTag } from './Dashboard';
+import { isStagingRuntimeTarget } from '../utils/runtimeTarget';
+import { usePortfolioDerivedData } from '../hooks/usePortfolioDerivedData';
 
 export default function Customers() {
-    const { state, bootstrapState } = useApp();
+    const { state, setState, bootstrapState } = useApp();
     const { openDrawer } = useDrawer();
     const { showToast } = useToast();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [query, setQuery] = useState('');
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [deletingCustomerId, setDeletingCustomerId] = useState('');
-    const readOnly = ['suspended', 'cancelled'].includes(String(state?.subscription?.status || '').toLowerCase());
+    const readOnly = String(state?.subscription?.status || '').toLowerCase() === 'suspended';
+    const {
+        loansByCustomerId,
+        paymentsByCustomerId,
+        paymentPromisesByCustomerId
+    } = usePortfolioDerivedData(state);
 
-    const filteredCustomers = state.customers.filter(customer => {
-        const haystack = `${customer.name} ${customer.email} ${customer.phone}`.toLowerCase();
-        return !query || haystack.includes(query.toLowerCase());
-    });
+    const filteredCustomers = useMemo(() => {
+        const normalizedQuery = query.trim().toLowerCase();
+        return (state.customers || []).filter((customer) => {
+            const haystack = `${customer.name} ${customer.email} ${customer.phone}`.toLowerCase();
+            return !normalizedQuery || haystack.includes(normalizedQuery);
+        });
+    }, [state.customers, query]);
+
+    const customerRows = useMemo(() => {
+        return filteredCustomers.map((customer) => {
+            const customerLoans = loansByCustomerId.get(customer.id) || [];
+            const activeCount = customerLoans.filter((loan) => loan.status === 'active' || loan.status === 'overdue').length;
+            const totalLent = customerLoans.reduce((sumAmount, loan) => sumAmount + Number(loan.principal || 0), 0);
+            return {
+                customer,
+                activeCount,
+                totalLent
+            };
+        });
+    }, [filteredCustomers, loansByCustomerId]);
+
+    const selectedCustomerLoans = useMemo(() => {
+        if (!selectedCustomer) {
+            return [];
+        }
+        return loansByCustomerId.get(selectedCustomer.id) || [];
+    }, [selectedCustomer, loansByCustomerId]);
+
+    const selectedCustomerPayments = useMemo(() => {
+        if (!selectedCustomer) {
+            return [];
+        }
+        return paymentsByCustomerId.get(selectedCustomer.id) || [];
+    }, [paymentsByCustomerId, selectedCustomer]);
+
+    const selectedCustomerPromises = useMemo(() => {
+        if (!selectedCustomer) {
+            return [];
+        }
+        return paymentPromisesByCustomerId.get(selectedCustomer.id) || [];
+    }, [paymentPromisesByCustomerId, selectedCustomer]);
+
+    const deepLinkedCustomerId = useMemo(
+        () => String(searchParams.get('customerId') || '').trim(),
+        [searchParams]
+    );
+
+    const syncCustomerSearchParam = useCallback((customerId) => {
+        setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            if (customerId) {
+                next.set('customerId', String(customerId));
+            } else {
+                next.delete('customerId');
+            }
+            return next;
+        }, { replace: true });
+    }, [setSearchParams]);
+
+    const openCustomerDetail = useCallback((customer) => {
+        if (!customer) {
+            return;
+        }
+
+        setSelectedCustomer(customer);
+        syncCustomerSearchParam(customer.id);
+    }, [syncCustomerSearchParam]);
+
+    const closeCustomerDetail = useCallback(() => {
+        setSelectedCustomer(null);
+        syncCustomerSearchParam('');
+    }, [syncCustomerSearchParam]);
+
+    useEffect(() => {
+        if (!deepLinkedCustomerId) {
+            setSelectedCustomer((current) => (current ? null : current));
+            return;
+        }
+
+        const matchingCustomer = (state.customers || []).find((customer) => String(customer.id) === deepLinkedCustomerId);
+        if (!matchingCustomer) {
+            return;
+        }
+
+        setSelectedCustomer((current) => (
+            current?.id === matchingCustomer.id ? current : matchingCustomer
+        ));
+    }, [deepLinkedCustomerId, state.customers]);
 
     const handleDeleteCustomer = async (customer) => {
         if (!customer || readOnly || deletingCustomerId) {
             return;
         }
 
-        const customerLoans = state.loans.filter((loan) => loan.customerId === customer.id);
+        const customerLoans = loansByCustomerId.get(customer.id) || [];
         const activeLoans = customerLoans.filter((loan) => loan.status === 'active' || loan.status === 'overdue').length;
         const warning = [
             `Vas a eliminar al cliente ${customer.name}.`,
@@ -44,9 +137,23 @@ export default function Customers() {
                 method: 'DELETE'
             });
             if (selectedCustomer?.id === customer.id) {
-                setSelectedCustomer(null);
+                closeCustomerDetail();
             }
-            await bootstrapState();
+
+            if (isStagingRuntimeTarget) {
+                setState((prev) => ({
+                    ...prev,
+                    customers: (prev.customers || []).filter((entry) => entry.id !== customer.id),
+                    loans: (prev.loans || []).filter((entry) => entry.customerId !== customer.id),
+                    payments: (prev.payments || []).filter((entry) => entry.customerId !== customer.id),
+                    paymentPromises: (prev.paymentPromises || []).filter((entry) => entry.customerId !== customer.id),
+                    collectionNotes: (prev.collectionNotes || []).filter((entry) => entry.customerId !== customer.id)
+                }));
+                bootstrapState({ silent: true }).catch(() => undefined);
+            } else {
+                await bootstrapState();
+            }
+
             showToast('Cliente eliminado exitosamente');
         } catch (error) {
             showToast(error.message || 'No se pudo eliminar el cliente');
@@ -82,17 +189,13 @@ export default function Customers() {
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredCustomers.length > 0 ? (
-                                filteredCustomers.map(customer => {
-                                    const customerLoans = state.loans.filter(l => l.customerId === customer.id);
-                                    const activeCount = customerLoans.filter(l => l.status === 'active' || l.status === 'overdue').length;
-                                    const totalLent = customerLoans.reduce((sumAmount, l) => sumAmount + l.principal, 0);
-
+                            {customerRows.length > 0 ? (
+                                customerRows.map(({ customer, activeCount, totalLent }) => {
                                     return (
                                         <tr
                                             key={customer.id}
                                             className="motion-item customer-row-clickable"
-                                            onClick={() => setSelectedCustomer(customer)}
+                                            onClick={() => openCustomerDetail(customer)}
                                         >
                                             <td data-label="Cliente">
                                                 <strong>{customer.name}</strong><br />
@@ -111,7 +214,7 @@ export default function Customers() {
                                                         className="action-link"
                                                         onClick={(event) => {
                                                             event.stopPropagation();
-                                                            setSelectedCustomer(customer);
+                                                            openCustomerDetail(customer);
                                                         }}
                                                     >
                                                         Ver detalle
@@ -143,15 +246,15 @@ export default function Customers() {
             {selectedCustomer && (
                 <CustomerDetailModal
                     customer={selectedCustomer}
-                    loans={state.loans.filter((loan) => loan.customerId === selectedCustomer.id)}
-                    payments={state.payments.filter((payment) => payment.customerId === selectedCustomer.id)}
-                    paymentPromises={(state.paymentPromises || []).filter((promise) => promise.customerId === selectedCustomer.id)}
+                    loans={selectedCustomerLoans}
+                    payments={selectedCustomerPayments}
+                    paymentPromises={selectedCustomerPromises}
                     fullState={state}
                     readOnly={readOnly}
                     deletingCustomerId={deletingCustomerId}
-                    onClose={() => setSelectedCustomer(null)}
+                    onClose={closeCustomerDetail}
                     onCreateLoan={() => {
-                        setSelectedCustomer(null);
+                        closeCustomerDetail();
                         openDrawer('loan');
                     }}
                     onDeleteCustomer={handleDeleteCustomer}
@@ -298,7 +401,7 @@ function CustomerDetailModal({
                             <div className="customer-risk-list">
                                 <span className="muted small">Promesas: {paymentPromises.length} total · {risk.pendingPromises} pendiente(s) · {risk.keptPromises} cumplida(s) · {risk.brokenPromises} incumplida(s)</span>
                                 <span className="muted small">Exposicion vigente: {money(risk.outstanding)} en {risk.activeLoans} credito(s) activo(s)</span>
-                                <span className="muted small">Atraso operativo: {risk.lagInstallments} cuota(s) · Mora acumulada {risk.overdueDaysTotal} dia(s)</span>
+                                <span className="muted small">Atraso operativo: {risk.lagInstallments} periodo(s) · Mora acumulada {risk.overdueDaysTotal} dia(s)</span>
                             </div>
                         </div>
 

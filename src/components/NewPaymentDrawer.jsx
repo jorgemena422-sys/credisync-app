@@ -1,17 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Drawer from './Drawer';
 import { apiRequest } from '../utils/api';
 import { useToast } from '../context/ToastContext';
 import { useApp } from '../context/AppContext';
 import { isoToday, loanInstallment, loanLateFeeOutstanding, loanOutstanding, loanOutstandingWithPenalty, money, round2 } from '../utils/helpers';
+import { isStagingRuntimeTarget } from '../utils/runtimeTarget';
+import { clearStagingDraft, readStagingDraft, saveStagingDraft } from '../utils/stagingDraft';
 
-export default function NewPaymentDrawer({ isOpen, onClose }) {
-    const { showToast } = useToast();
-    const { state, bootstrapState } = useApp();
-    const [loading, setLoading] = useState(false);
-    const [showLateFeeDetail, setShowLateFeeDetail] = useState(false);
+const PAYMENT_DRAFT_KEY = 'credisync:staging:draft:new-payment';
 
-    const [formData, setFormData] = useState({
+function buildEmptyPaymentForm() {
+    return {
         loanId: '',
         baseAmount: '',
         interestAmount: '',
@@ -19,7 +18,39 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
         generateReceiptPdf: true,
         method: 'transfer',
         date: isoToday()
-    });
+    };
+}
+
+export default function NewPaymentDrawer({ isOpen, onClose }) {
+    const { showToast } = useToast();
+    const { state, setState, bootstrapState } = useApp();
+    const [loading, setLoading] = useState(false);
+    const [showLateFeeDetail, setShowLateFeeDetail] = useState(false);
+
+    const [formData, setFormData] = useState(buildEmptyPaymentForm);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        const fallback = buildEmptyPaymentForm();
+        const draft = readStagingDraft(PAYMENT_DRAFT_KEY, fallback);
+        setFormData(draft && typeof draft === 'object' ? { ...fallback, ...draft } : fallback);
+    }, [isOpen]);
+
+    useEffect(() => {
+        if (!isOpen || !isStagingRuntimeTarget) return;
+        saveStagingDraft(PAYMENT_DRAFT_KEY, formData);
+    }, [formData, isOpen]);
+
+    const resetPaymentDraft = () => {
+        setFormData(buildEmptyPaymentForm());
+        setShowLateFeeDetail(false);
+        clearStagingDraft(PAYMENT_DRAFT_KEY);
+    };
+
+    const handleClose = () => {
+        resetPaymentDraft();
+        onClose();
+    };
 
     const selectedLoan = state.loans.find(l => String(l.id) === String(formData.loanId));
     const isInterestOnlyLoan = selectedLoan?.paymentModel === 'interest_only_balloon';
@@ -76,7 +107,7 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!formData.loanId || totalAmount <= 0) {
-            showToast('Selecciona un prestamo y especifica cuota o mora');
+            showToast(isInterestOnlyLoan ? 'Selecciona un prestamo y especifica capital, interes o mora' : 'Selecciona un prestamo y especifica cuota o mora');
             return;
         }
 
@@ -143,18 +174,16 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
                 }
             }
 
-            setFormData({
-                loanId: '',
-                baseAmount: '',
-                interestAmount: '',
-                lateFeeAmount: '',
-                generateReceiptPdf: true,
-                method: 'transfer',
-                date: isoToday()
-            });
-            setShowLateFeeDetail(false);
-            await bootstrapState();
-            onClose();
+            handleClose();
+            if (isStagingRuntimeTarget && response?.payment) {
+                setState((prev) => ({
+                    ...prev,
+                    payments: [response.payment, ...(prev.payments || [])]
+                }));
+                bootstrapState({ silent: true }).catch(() => undefined);
+            } else {
+                bootstrapState().catch(() => undefined);
+            }
         } catch (err) {
             showToast(err.message || 'Error registrando el pago');
         } finally {
@@ -194,7 +223,7 @@ export default function NewPaymentDrawer({ isOpen, onClose }) {
     const activeLoans = state.loans.filter(l => l.status === 'active' || l.status === 'overdue');
 
     return (
-        <Drawer isOpen={isOpen} onClose={onClose} title="Registrar Pago">
+        <Drawer isOpen={isOpen} onClose={handleClose} title="Registrar Pago">
             <div className="drawer-form-shell">
                 <section className="drawer-hero">
                     <div className="drawer-hero-main">

@@ -146,7 +146,7 @@ create table if not exists public.collection_notes (
 
 create table if not exists public.notifications (
   id text primary key,
-  tenant_id text not null references public.tenants(id) on delete cascade,
+  tenant_id text references public.tenants(id) on delete cascade,
   code text not null unique,
   type text not null,
   severity text not null default 'info',
@@ -176,7 +176,7 @@ create table if not exists public.user_calendar_integrations (
 
 create table if not exists public.push_subscriptions (
   id text primary key,
-  tenant_id text not null references public.tenants(id) on delete cascade,
+  tenant_id text references public.tenants(id) on delete cascade,
   user_id text not null references public.users(id) on delete cascade,
   endpoint text not null,
   endpoint_hash text not null,
@@ -194,7 +194,7 @@ create table if not exists public.push_subscriptions (
 
 create table if not exists public.push_delivery_logs (
   id text primary key,
-  tenant_id text not null references public.tenants(id) on delete cascade,
+  tenant_id text references public.tenants(id) on delete cascade,
   user_id text not null references public.users(id) on delete cascade,
   subscription_id text references public.push_subscriptions(id) on delete set null,
   delivery_type text not null,
@@ -216,7 +216,7 @@ create table if not exists public.subscription_plans (
   name text not null,
   description text,
   price_monthly numeric(12,2) not null default 0,
-  currency text not null default 'USD',
+  currency text not null default 'DOP',
   billing_cycle text not null default 'monthly',
   is_active boolean not null default true,
   features jsonb not null default '{}'::jsonb,
@@ -231,9 +231,9 @@ create table if not exists public.tenant_subscriptions (
   id text primary key,
   tenant_id text not null unique references public.tenants(id) on delete cascade,
   plan_id text not null references public.subscription_plans(id) on delete restrict,
-  status text not null default 'trial',
+  status text not null default 'active',
   billing_cycle text not null default 'monthly',
-  currency text not null default 'USD',
+  currency text not null default 'DOP',
   current_period_start date not null,
   current_period_end date not null,
   next_billing_date date not null,
@@ -243,7 +243,7 @@ create table if not exists public.tenant_subscriptions (
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint tenant_subscriptions_status_check check (status in ('trial', 'active', 'past_due', 'suspended', 'cancelled')),
+  constraint tenant_subscriptions_status_check check (status in ('active', 'suspended')),
   constraint tenant_subscriptions_cycle_check check (billing_cycle in ('monthly'))
 );
 
@@ -255,7 +255,7 @@ create table if not exists public.billing_invoices (
   period_start date not null,
   period_end date not null,
   amount numeric(12,2) not null,
-  currency text not null default 'USD',
+  currency text not null default 'DOP',
   status text not null default 'pending',
   due_date date not null,
   issued_at timestamptz not null default now(),
@@ -273,7 +273,7 @@ create table if not exists public.billing_payments (
   invoice_id text not null references public.billing_invoices(id) on delete cascade,
   tenant_id text not null references public.tenants(id) on delete cascade,
   amount numeric(12,2) not null,
-  currency text not null default 'USD',
+  currency text not null default 'DOP',
   method text not null,
   reference text,
   status text not null default 'reported',
@@ -362,6 +362,7 @@ alter table public.payment_promises add column if not exists tenant_id text;
 alter table public.collection_notes add column if not exists tenant_id text;
 alter table public.notifications add column if not exists tenant_id text;
 alter table public.notifications add column if not exists updated_at timestamptz not null default now();
+alter table public.notifications alter column tenant_id drop not null;
 alter table public.user_calendar_integrations add column if not exists user_id text;
 alter table public.user_calendar_integrations add column if not exists tenant_id text;
 alter table public.user_calendar_integrations add column if not exists enabled boolean not null default true;
@@ -395,6 +396,7 @@ begin
   end if;
 end $$;
 alter table public.push_subscriptions add column if not exists updated_at timestamptz not null default now();
+alter table public.push_subscriptions alter column tenant_id drop not null;
 alter table public.push_delivery_logs add column if not exists id text;
 alter table public.push_delivery_logs add column if not exists tenant_id text;
 alter table public.push_delivery_logs add column if not exists user_id text;
@@ -408,11 +410,12 @@ alter table public.push_delivery_logs add column if not exists error_message tex
 alter table public.push_delivery_logs add column if not exists payload jsonb not null default '{}'::jsonb;
 alter table public.push_delivery_logs add column if not exists sent_at timestamptz not null default now();
 alter table public.push_delivery_logs add column if not exists updated_at timestamptz not null default now();
+alter table public.push_delivery_logs alter column tenant_id drop not null;
 alter table public.subscription_plans add column if not exists code text;
 alter table public.subscription_plans add column if not exists name text;
 alter table public.subscription_plans add column if not exists description text;
 alter table public.subscription_plans add column if not exists price_monthly numeric(12,2) not null default 0;
-alter table public.subscription_plans add column if not exists currency text not null default 'USD';
+alter table public.subscription_plans add column if not exists currency text not null default 'DOP';
 alter table public.subscription_plans add column if not exists billing_cycle text not null default 'monthly';
 alter table public.subscription_plans add column if not exists is_active boolean not null default true;
 alter table public.subscription_plans add column if not exists features jsonb not null default '{}'::jsonb;
@@ -420,9 +423,9 @@ alter table public.subscription_plans add column if not exists limits jsonb not 
 alter table public.subscription_plans add column if not exists updated_at timestamptz not null default now();
 alter table public.tenant_subscriptions add column if not exists tenant_id text;
 alter table public.tenant_subscriptions add column if not exists plan_id text;
-alter table public.tenant_subscriptions add column if not exists status text not null default 'trial';
+alter table public.tenant_subscriptions add column if not exists status text not null default 'active';
 alter table public.tenant_subscriptions add column if not exists billing_cycle text not null default 'monthly';
-alter table public.tenant_subscriptions add column if not exists currency text not null default 'USD';
+alter table public.tenant_subscriptions add column if not exists currency text not null default 'DOP';
 alter table public.tenant_subscriptions add column if not exists current_period_start date;
 alter table public.tenant_subscriptions add column if not exists current_period_end date;
 alter table public.tenant_subscriptions add column if not exists next_billing_date date;
@@ -437,7 +440,7 @@ alter table public.billing_invoices add column if not exists plan_id text;
 alter table public.billing_invoices add column if not exists period_start date;
 alter table public.billing_invoices add column if not exists period_end date;
 alter table public.billing_invoices add column if not exists amount numeric(12,2) not null default 0;
-alter table public.billing_invoices add column if not exists currency text not null default 'USD';
+alter table public.billing_invoices add column if not exists currency text not null default 'DOP';
 alter table public.billing_invoices add column if not exists status text not null default 'pending';
 alter table public.billing_invoices add column if not exists due_date date;
 alter table public.billing_invoices add column if not exists issued_at timestamptz not null default now();
@@ -448,7 +451,7 @@ alter table public.billing_invoices add column if not exists updated_at timestam
 alter table public.billing_payments add column if not exists invoice_id text;
 alter table public.billing_payments add column if not exists tenant_id text;
 alter table public.billing_payments add column if not exists amount numeric(12,2) not null default 0;
-alter table public.billing_payments add column if not exists currency text not null default 'USD';
+alter table public.billing_payments add column if not exists currency text not null default 'DOP';
 alter table public.billing_payments add column if not exists method text;
 alter table public.billing_payments add column if not exists reference text;
 alter table public.billing_payments add column if not exists status text not null default 'reported';

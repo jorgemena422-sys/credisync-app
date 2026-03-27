@@ -58,6 +58,10 @@ const requiredKeys = [
   "CORS_ORIGIN"
 ];
 
+if (environmentName === "staging") {
+  requiredKeys.push("PUSH_VAPID_PUBLIC_KEY", "PUSH_VAPID_PRIVATE_KEY");
+}
+
 const missingKeys = requiredKeys.filter((key) => !String(parsedEnv[key] || "").trim());
 if (missingKeys.length > 0) {
   console.error(`[deploy-cloud-run-service] Missing required keys in ${envConfig.envFile}: ${missingKeys.join(", ")}`);

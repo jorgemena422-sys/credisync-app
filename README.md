@@ -29,6 +29,11 @@ SUPABASE_ANON_KEY=TU_ANON_KEY
 JWT_SECRET=usa-un-secreto-largo-aleatorio-de-32-o-mas-caracteres
 CORS_ORIGIN=http://localhost:5173
 APP_PUBLIC_URL=http://localhost:3001
+RESEND_API_KEY=re_placeholder
+RESEND_FROM_EMAIL=onboarding@resend.dev
+RESEND_FROM_NAME=CrediSync
+RESEND_REPLY_TO_EMAIL=soporte@tu-dominio.com
+BILLING_AUTO_EMAIL_ENABLED=true
 PUSH_VAPID_PUBLIC_KEY=TU_CLAVE_PUBLICA_VAPID
 PUSH_VAPID_PRIVATE_KEY=TU_CLAVE_PRIVADA_VAPID
 PUSH_VAPID_SUBJECT=mailto:soporte@tu-dominio.com
@@ -44,6 +49,8 @@ Para despliegue productivo puedes usar como base `./.env.production.example`.
 > Si no tienes `SUPABASE_SERVICE_ROLE_KEY`, temporalmente puedes usar `SUPABASE_ANON_KEY`. En ese modo, el alta usa `supabase.auth.signUp` y puede requerir verificacion de correo segun tu configuracion de Auth.
 >
 > `ENABLE_SUPERADMIN_BOOTSTRAP` debe permanecer en `false` en produccion. Activalo solo para crear el primer superadministrador y vuelve a apagarlo.
+>
+> Para envio de comprobantes y facturas por correo, configura `RESEND_API_KEY` y `RESEND_FROM_EMAIL`. Si `BILLING_AUTO_EMAIL_ENABLED=true`, las facturas creadas desde superadmin se intentaran enviar automaticamente al correo propietario del tenant.
 
 3. En Supabase, ejecuta `supabase_schema.sql` (y opcionalmente `supabase_reset_data.sql`).
 
@@ -111,6 +118,8 @@ Nota: el backend debe estar desplegado en el servicio indicado por `hosting.rewr
 
 ## Push diario (PWA iPhone)
 
+- Para habilitar push en staging, `.env.staging` debe incluir `PUSH_VAPID_PUBLIC_KEY` y `PUSH_VAPID_PRIVATE_KEY`.
+- Verificacion rapida: `GET /api/push/status` debe responder `push.configured=true` y `push.vapidPublicKey` no vacio.
 - El envio del resumen diario corre por endpoint protegido: `POST /api/jobs/push-daily-summary`.
 - Programa Cloud Scheduler para llamar ese endpoint cada 15 minutos con header:
 

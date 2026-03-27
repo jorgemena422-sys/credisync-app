@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useDeferredValue, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { apiRequest } from '../utils/api';
 import { useToast } from '../context/ToastContext';
-import { daysOverdue, formatDate, isoToday, loanInstallment, loanLateFeeOutstanding, loanNextDueDate, loanOutstandingWithPenalty, money, startOfDay } from '../utils/helpers';
+import { daysOverdue, formatDate, isoToday, loanInstallment, loanLateFeeOutstanding, loanNextDueDate, loanOutstandingWithPenalty, money, startOfDay, isInterestOnlyBalloonLoan } from '../utils/helpers';
 import { useDrawer } from '../context/DrawerContext';
+import { isStagingRuntimeTarget } from '../utils/runtimeTarget';
 
 const PROMISE_STATUS_LABELS = {
     pending: 'Pendiente',
@@ -32,12 +33,13 @@ function riskMeta(score) {
 }
 
 export default function Payments() {
-    const { state, bootstrapState } = useApp();
+    const { state, setState, bootstrapState } = useApp();
     const { showToast } = useToast();
     const { openDrawer } = useDrawer();
 
     const [queueFilter, setQueueFilter] = useState('all');
     const [search, setSearch] = useState('');
+    const deferredSearch = useDeferredValue(search);
     const [promiseLoading, setPromiseLoading] = useState(false);
     const [noteLoading, setNoteLoading] = useState(false);
     const [promiseForm, setPromiseForm] = useState({
@@ -52,7 +54,7 @@ export default function Payments() {
         loanId: '',
         body: ''
     });
-    const readOnly = ['suspended', 'cancelled'].includes(String(state?.subscription?.status || '').toLowerCase());
+    const readOnly = String(state?.subscription?.status || '').toLowerCase() === 'suspended';
 
     const recentPayments = state.payments
         .slice()
@@ -64,6 +66,19 @@ export default function Payments() {
         .sort((a, b) => new Date(a.promisedDate) - new Date(b.promisedDate));
 
     const today = useMemo(() => startOfDay(new Date()), []);
+
+    const customersById = useMemo(() => {
+        const map = new Map();
+        (state.customers || []).forEach((customer) => {
+            map.set(customer.id, customer);
+        });
+        return map;
+    }, [state.customers]);
+
+    const loanMathState = useMemo(() => ({
+        payments: state.payments,
+        settings: state.settings
+    }), [state.payments, state.settings]);
 
     const collectionQueue = useMemo(() => {
         const promisesByLoan = new Map();
@@ -93,13 +108,14 @@ export default function Payments() {
         return (state.loans || [])
             .filter((loan) => loan.status !== 'paid')
             .map((loan) => {
-                const customer = state.customers.find((item) => item.id === loan.customerId);
+                const customer = customersById.get(loan.customerId) || null;
                 const dueDate = loanNextDueDate(loan);
                 const dueDay = dueDate ? startOfDay(dueDate) : null;
                 const daysUntilDue = dueDay ? Math.floor((dueDay - today) / 86400000) : 999;
-                const overdueDays = daysOverdue(loan, state);
-                const lateFeeOutstanding = loanLateFeeOutstanding(loan, state);
-                const outstanding = loanOutstandingWithPenalty(loan, state);
+                const isInterestOnly = isInterestOnlyBalloonLoan(loan);
+                const overdueDays = daysOverdue(loan, loanMathState);
+                const lateFeeOutstanding = loanLateFeeOutstanding(loan, loanMathState);
+                const outstanding = loanOutstandingWithPenalty(loan, loanMathState);
                 const installment = loanInstallment(loan);
                 const pendingPromise = pendingByLoan.get(loan.id) || null;
                 const loanPromises = promisesByLoan.get(loan.id) || [];
@@ -133,6 +149,8 @@ export default function Payments() {
                     outstanding,
                     lateFeeOutstanding,
                     installment,
+                    dueAmountLabel: isInterestOnly ? 'Interes estimado' : 'Cuota estimada',
+                    lagLabel: isInterestOnly ? 'periodo(s)' : 'cuota(s)',
                     pendingPromise,
                     priority: priorityMeta({ overdueDays, daysUntilDue }),
                     risk,
@@ -146,7 +164,7 @@ export default function Payments() {
                 if (a.daysUntilDue !== b.daysUntilDue) return a.daysUntilDue - b.daysUntilDue;
                 return b.outstanding - a.outstanding;
             });
-    }, [state, pendingPromises, today]);
+    }, [state.loans, state.paymentPromises, state.payments, customersById, pendingPromises, today, loanMathState]);
 
     const queueSummary = useMemo(() => {
         const highRisk = collectionQueue.filter((item) => item.risk.score >= 60).length;
@@ -164,9 +182,9 @@ export default function Payments() {
             if (queueFilter === 'risk-high' && item.risk.score < 60) return false;
 
             const haystack = `${item.loan.id} ${item.customer?.name || ''} ${item.customer?.email || ''}`.toLowerCase();
-            return !search || haystack.includes(search.toLowerCase());
+            return !deferredSearch || haystack.includes(deferredSearch.toLowerCase());
         });
-    }, [collectionQueue, queueFilter, search]);
+    }, [collectionQueue, queueFilter, deferredSearch]);
 
     const customerLoans = useMemo(() => {
         if (!noteForm.customerId) return [];
@@ -182,7 +200,7 @@ export default function Payments() {
             return;
         }
 
-        const suggested = Math.min(loanInstallment(loan) + loanLateFeeOutstanding(loan, state), loanOutstandingWithPenalty(loan, state));
+        const suggested = Math.min(loanInstallment(loan) + loanLateFeeOutstanding(loan, loanMathState), loanOutstandingWithPenalty(loan, loanMathState));
         setPromiseForm((prev) => ({
             ...prev,
             loanId,
@@ -199,7 +217,7 @@ export default function Payments() {
         }
         try {
             setPromiseLoading(true);
-            await apiRequest('/payment-promises', {
+            const response = await apiRequest('/payment-promises', {
                 method: 'POST',
                 body: {
                     loanId: promiseForm.loanId,
@@ -210,7 +228,17 @@ export default function Payments() {
                 }
             });
             setPromiseForm({ loanId: '', customerId: '', promisedAmount: '', promisedDate: isoToday(), note: '' });
-            await bootstrapState();
+
+            if (isStagingRuntimeTarget && response?.paymentPromise) {
+                setState((prev) => ({
+                    ...prev,
+                    paymentPromises: [response.paymentPromise, ...(prev.paymentPromises || [])]
+                }));
+                bootstrapState({ silent: true }).catch(() => undefined);
+            } else {
+                await bootstrapState();
+            }
+
             showToast('Promesa de pago registrada');
         } catch (error) {
             showToast(error.message || 'No se pudo crear la promesa');
@@ -229,7 +257,22 @@ export default function Payments() {
                 method: 'PATCH',
                 body: { status }
             });
-            await bootstrapState();
+
+            if (isStagingRuntimeTarget) {
+                const resolvedAt = status === 'pending' ? null : new Date().toISOString();
+                setState((prev) => ({
+                    ...prev,
+                    paymentPromises: (prev.paymentPromises || []).map((item) => (
+                        item.id === promiseId
+                            ? { ...item, status, resolvedAt }
+                            : item
+                    ))
+                }));
+                bootstrapState({ silent: true }).catch(() => undefined);
+            } else {
+                await bootstrapState();
+            }
+
             showToast('Estado de promesa actualizado');
         } catch (error) {
             showToast(error.message || 'No se pudo actualizar la promesa');
@@ -244,7 +287,7 @@ export default function Payments() {
         }
         try {
             setNoteLoading(true);
-            await apiRequest('/collection-notes', {
+            const response = await apiRequest('/collection-notes', {
                 method: 'POST',
                 body: {
                     customerId: noteForm.customerId,
@@ -253,7 +296,17 @@ export default function Payments() {
                 }
             });
             setNoteForm({ customerId: '', loanId: '', body: '' });
-            await bootstrapState();
+
+            if (isStagingRuntimeTarget && response?.note) {
+                setState((prev) => ({
+                    ...prev,
+                    collectionNotes: [response.note, ...(prev.collectionNotes || [])]
+                }));
+                bootstrapState({ silent: true }).catch(() => undefined);
+            } else {
+                await bootstrapState();
+            }
+
             showToast('Nota guardada');
         } catch (error) {
             showToast(error.message || 'No se pudo guardar la nota');
@@ -317,7 +370,7 @@ export default function Payments() {
                                 <th>Cliente</th>
                                 <th>Prestamo</th>
                                 <th>Vencimiento</th>
-                                <th>Cuota estimada</th>
+                                <th>Cobro estimado</th>
                                 <th>Saldo</th>
                                 <th>Riesgo</th>
                                 <th>Prioridad</th>
@@ -343,7 +396,12 @@ export default function Payments() {
                                                 </span>
                                             </div>
                                         </td>
-                                        <td data-label="Cuota estimada">{money(Math.min(item.installment + item.lateFeeOutstanding, item.outstanding))}</td>
+                                        <td data-label="Cobro estimado">
+                                            <div className="cell-stack">
+                                                <strong>{money(Math.min(item.installment + item.lateFeeOutstanding, item.outstanding))}</strong>
+                                                <small className="muted">{item.dueAmountLabel}</small>
+                                            </div>
+                                        </td>
                                         <td data-label="Saldo">
                                             <div className="cell-stack">
                                                 <strong>{money(item.outstanding)}</strong>
@@ -355,7 +413,7 @@ export default function Payments() {
                                                 <strong>{item.risk.score}/100</strong>
                                                 <span className={`status queue-risk queue-risk-${item.risk.tone}`}>{item.risk.label}</span>
                                                 {item.lagInstallments > 0 && (
-                                                    <small className="muted">Atraso: {item.lagInstallments} cuota(s)</small>
+                                                    <small className="muted">Atraso: {item.lagInstallments} {item.lagLabel}</small>
                                                 )}
                                             </div>
                                         </td>

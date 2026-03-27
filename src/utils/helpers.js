@@ -1,7 +1,7 @@
-let currentCurrency = 'USD';
+let currentCurrency = 'DOP';
 
 export function setCurrency(currency) {
-    currentCurrency = String(currency || 'USD').toUpperCase();
+    currentCurrency = String(currency || 'DOP').toUpperCase();
 }
 
 export const moneyFmt = new Intl.NumberFormat("es-MX", { style: "currency", currency: currentCurrency });
@@ -9,6 +9,16 @@ export const moneyFmt = new Intl.NumberFormat("es-MX", { style: "currency", curr
 export function money(value) {
     const fmt = new Intl.NumberFormat("es-MX", { style: "currency", currency: currentCurrency });
     return fmt.format(value || 0);
+}
+
+export function moneyWithCurrency(value, currency = 'DOP') {
+    const normalizedCurrency = String(currency || 'DOP').toUpperCase();
+    try {
+        const fmt = new Intl.NumberFormat("es-MX", { style: "currency", currency: normalizedCurrency });
+        return fmt.format(value || 0);
+    } catch {
+        return `${round2(value || 0)} ${normalizedCurrency}`;
+    }
 }
 
 export function shortMoney(value) {
@@ -78,7 +88,17 @@ export function initials(value) {
 }
 
 export function isoToday() {
-    return new Date().toISOString().slice(0, 10);
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Santo_Domingo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+    }).formatToParts(new Date());
+    const map = {};
+    parts.forEach((part) => {
+        map[part.type] = part.value;
+    });
+    return `${map.year}-${map.month}-${map.day}`;
 }
 
 export function toDate(value) {

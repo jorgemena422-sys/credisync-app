@@ -1,4 +1,4 @@
-const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const UPDATE_CHECK_INTERVAL_MS = 60 * 1000;
 const UPDATE_RELOAD_FLAG = 'credisync-update-pending';
 
 export function applyAppUpdate(registration) {
@@ -21,6 +21,27 @@ export function registerAppServiceWorker({ onUpdateReady, onOpenUrl } = {}) {
     let registrationRef = null;
     let updateIntervalId = null;
 
+    const isStandaloneApp = () => {
+        if (typeof window === 'undefined') {
+            return false;
+        }
+
+        return window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator?.standalone === true;
+    };
+
+    const maybeApplyWaitingUpdate = () => {
+        if (!registrationRef?.waiting || isReloading) {
+            return false;
+        }
+
+        if (document.visibilityState === 'hidden' || isStandaloneApp()) {
+            return applyAppUpdate(registrationRef);
+        }
+
+        notifyUpdateReady();
+        return false;
+    };
+
     const notifyUpdateReady = () => {
         if (!isMounted || !registrationRef?.waiting) {
             return;
@@ -40,7 +61,7 @@ export function registerAppServiceWorker({ onUpdateReady, onOpenUrl } = {}) {
             }
 
             if (navigator.serviceWorker.controller) {
-                notifyUpdateReady();
+                maybeApplyWaitingUpdate();
             }
         });
     };
@@ -63,9 +84,20 @@ export function registerAppServiceWorker({ onUpdateReady, onOpenUrl } = {}) {
     };
 
     const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+            maybeApplyWaitingUpdate();
+            return;
+        }
+
         if (document.visibilityState === 'visible') {
             registrationRef?.update?.().catch(() => undefined);
+            maybeApplyWaitingUpdate();
         }
+    };
+
+    const handleForegroundRefresh = () => {
+        registrationRef?.update?.().catch(() => undefined);
+        maybeApplyWaitingUpdate();
     };
 
     const startRegistration = async () => {
@@ -89,7 +121,7 @@ export function registerAppServiceWorker({ onUpdateReady, onOpenUrl } = {}) {
                 watchInstallingWorker(registration.installing);
             });
 
-            notifyUpdateReady();
+            maybeApplyWaitingUpdate();
 
             updateIntervalId = window.setInterval(() => {
                 registration.update().catch(() => undefined);
@@ -102,6 +134,9 @@ export function registerAppServiceWorker({ onUpdateReady, onOpenUrl } = {}) {
     navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
     navigator.serviceWorker.addEventListener('message', handleMessage);
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleForegroundRefresh);
+    window.addEventListener('online', handleForegroundRefresh);
+    window.addEventListener('pageshow', handleForegroundRefresh);
 
     if (document.readyState === 'complete') {
         startRegistration();
@@ -117,6 +152,9 @@ export function registerAppServiceWorker({ onUpdateReady, onOpenUrl } = {}) {
         navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
         navigator.serviceWorker.removeEventListener('message', handleMessage);
         document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('focus', handleForegroundRefresh);
+        window.removeEventListener('online', handleForegroundRefresh);
+        window.removeEventListener('pageshow', handleForegroundRefresh);
         window.removeEventListener('load', startRegistration);
     };
 }

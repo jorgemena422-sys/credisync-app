@@ -1,9 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Drawer from './Drawer';
 import { apiRequest } from '../utils/api';
 import { useToast } from '../context/ToastContext';
 import { useApp } from '../context/AppContext';
 import { isoToday, capitalAvailable, money } from '../utils/helpers';
+import { isStagingRuntimeTarget } from '../utils/runtimeTarget';
+import { clearStagingDraft, readStagingDraft, saveStagingDraft } from '../utils/stagingDraft';
+
+const LOAN_DRAFT_KEY = 'credisync:staging:draft:new-loan';
 
 function getRateForLoanType(settings, loanType) {
     const rateMap = {
@@ -27,32 +31,47 @@ function getRateForLoanType(settings, loanType) {
 
 export default function NewLoanDrawer({ isOpen, onClose }) {
     const { showToast } = useToast();
-    const { state, bootstrapState } = useApp();
+    const { state, setState, bootstrapState } = useApp();
     const [loading, setLoading] = useState(false);
     const rateManuallyEdited = useRef(false);
 
     const availableCapital = capitalAvailable(state);
-    const currentRate = getRateForLoanType(state.settings, 'personal');
-
-    const [formData, setFormData] = useState({
+    const buildDefaultForm = useCallback(() => ({
         customerId: '',
         principal: '',
-        interestRate: currentRate,
+        interestRate: getRateForLoanType(state.settings, 'personal'),
         interestRateMode: 'annual',
         paymentModel: 'interest_only_balloon',
         termMonths: '',
         startDate: isoToday(),
         type: 'personal'
-    });
+    }), [state.settings]);
+
+    const [formData, setFormData] = useState(buildDefaultForm);
 
     const selectedCustomer = state.customers.find(customer => String(customer.id) === String(formData.customerId));
 
     // Reset manual edit flag when drawer opens
     useEffect(() => {
         if (isOpen) {
-            rateManuallyEdited.current = false;
+            const draft = readStagingDraft(LOAN_DRAFT_KEY, null);
+            if (draft && typeof draft === 'object' && draft.formData) {
+                rateManuallyEdited.current = Boolean(draft.rateManuallyEdited);
+                setFormData({ ...buildDefaultForm(), ...draft.formData });
+            } else {
+                rateManuallyEdited.current = false;
+                setFormData(buildDefaultForm());
+            }
         }
-    }, [isOpen]);
+    }, [isOpen, buildDefaultForm]);
+
+    useEffect(() => {
+        if (!isOpen || !isStagingRuntimeTarget) return;
+        saveStagingDraft(LOAN_DRAFT_KEY, {
+            formData,
+            rateManuallyEdited: rateManuallyEdited.current
+        });
+    }, [formData, isOpen]);
 
     // Auto-fill rate when loan type changes — but NOT if the user manually edited it
     useEffect(() => {
@@ -80,7 +99,7 @@ export default function NewLoanDrawer({ isOpen, onClose }) {
 
         try {
             setLoading(true);
-            await apiRequest('/loans', {
+            const response = await apiRequest('/loans', {
                 method: 'POST',
                 body: {
                     ...formData,
@@ -90,13 +109,20 @@ export default function NewLoanDrawer({ isOpen, onClose }) {
                 }
             });
             showToast('Prestamo creado exitosamente');
-            const resetRate = getRateForLoanType(state.settings, 'personal');
             rateManuallyEdited.current = false;
-            setFormData({
-                customerId: '', principal: '', interestRate: resetRate, interestRateMode: 'annual', paymentModel: 'interest_only_balloon', termMonths: '', startDate: isoToday(), type: 'personal'
-            });
-            await bootstrapState();
             onClose();
+            setFormData(buildDefaultForm());
+            clearStagingDraft(LOAN_DRAFT_KEY);
+
+            if (isStagingRuntimeTarget && response?.loan) {
+                setState((prev) => ({
+                    ...prev,
+                    loans: [response.loan, ...(prev.loans || [])]
+                }));
+                bootstrapState({ silent: true }).catch(() => undefined);
+            } else {
+                bootstrapState().catch(() => undefined);
+            }
         } catch (err) {
             showToast(err.message || 'Error originando prestamo');
         } finally {

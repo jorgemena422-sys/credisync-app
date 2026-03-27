@@ -48,13 +48,21 @@ const EXPECTED_APP_PUBLIC_URL = String(process.env.EXPECTED_APP_PUBLIC_URL || ""
 const PUSH_VAPID_PUBLIC_KEY = String(process.env.PUSH_VAPID_PUBLIC_KEY || "").trim();
 const PUSH_VAPID_PRIVATE_KEY = String(process.env.PUSH_VAPID_PRIVATE_KEY || "").trim();
 const PUSH_VAPID_SUBJECT = String(process.env.PUSH_VAPID_SUBJECT || "mailto:soporte@credisync.app").trim();
-const SENDGRID_API_KEY = String(process.env.SENDGRID_API_KEY || "").trim();
-const SENDGRID_FROM_EMAIL = String(process.env.SENDGRID_FROM_EMAIL || "").trim();
-const SENDGRID_FROM_NAME = String(process.env.SENDGRID_FROM_NAME || "CrediSync").trim();
-const SENDGRID_REPLY_TO_EMAIL = String(process.env.SENDGRID_REPLY_TO_EMAIL || SENDGRID_FROM_EMAIL || "").trim();
+const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
+const RESEND_FROM_EMAIL = String(process.env.RESEND_FROM_EMAIL || "").trim();
+const RESEND_FROM_NAME = String(process.env.RESEND_FROM_NAME || "CrediSync").trim();
+const RESEND_REPLY_TO_EMAIL = String(process.env.RESEND_REPLY_TO_EMAIL || RESEND_FROM_EMAIL || "").trim();
+const BILLING_AUTO_EMAIL_ENABLED = String(process.env.BILLING_AUTO_EMAIL_ENABLED || "true").trim().toLowerCase() === "true";
+const DEFAULT_BILLING_INVOICE_NOTE = "Recuerda hacer el pago antes de la fecha limite para evitar suspencion";
+const DEFAULT_CASH_PAYMENT_REFERENCE = "PAGO EN EFECTIVO";
+const DEFAULT_TRANSFER_PAYMENT_REFERENCE = "COMPROBANTE DE TRANSFERENCIA";
+const BILLING_PAYMENT_META_KIND = "billing_payment_meta_v1";
+const MAX_BILLING_PAYMENT_PROOF_BYTES = 2 * 1024 * 1024;
 const PUSH_DAILY_SUMMARY_JOB_TOKEN = String(process.env.PUSH_DAILY_SUMMARY_JOB_TOKEN || "").trim();
 const PUSH_DAILY_SUMMARY_LOCAL_HOUR = 8;
 const PUSH_DELIVERY_TYPE_DAILY_SUMMARY = "daily_summary";
+const PUSH_DELIVERY_TYPE_NOTIFICATION_EVENT = "notification_event";
+const PUSH_DELIVERY_TYPE_PAYMENT_RECEIVED = "payment_received";
 const ENABLE_LOCAL_PUSH_SCHEDULER = String(process.env.ENABLE_LOCAL_PUSH_SCHEDULER || (IS_PROD ? "false" : "true"))
   .trim()
   .toLowerCase() === "true";
@@ -64,14 +72,21 @@ const SUPERADMIN_ROLE = "SuperAdministrador";
 const ADMIN_ROLE = "Administrador";
 const INACTIVE_BAN_DURATION = "876000h";
 const PAYMENT_PROMISE_STATUSES = new Set(["pending", "kept", "broken", "cancelled"]);
-const SUBSCRIPTION_STATUSES = new Set(["trial", "active", "past_due", "suspended", "cancelled"]);
-const READ_ONLY_SUBSCRIPTION_STATUSES = new Set(["suspended", "cancelled"]);
+const SUBSCRIPTION_STATUSES = new Set(["active", "suspended"]);
+const READ_ONLY_SUBSCRIPTION_STATUSES = new Set(["suspended"]);
 const BILLING_INVOICE_STATUSES = new Set(["pending", "overdue", "paid", "void"]);
 const BILLING_PAYMENT_STATUSES = new Set(["reported", "confirmed", "rejected"]);
-const DEFAULT_SUBSCRIPTION_CURRENCY = "USD";
+const OUTSTANDING_BILLING_INVOICE_STATUSES = new Set(["pending", "overdue"]);
+const DEFAULT_SUBSCRIPTION_CURRENCY = "DOP";
 const DEFAULT_SUBSCRIPTION_CYCLE = "monthly";
 const DEFAULT_TRIAL_DAYS = 14;
 const DEFAULT_BILLING_PERIOD_DAYS = 30;
+const TENANT_SUBSCRIPTION_MAINTENANCE_INTERVAL_MS = Math.max(
+  Math.trunc(Number(process.env.TENANT_SUBSCRIPTION_MAINTENANCE_INTERVAL_MS || 5 * 60 * 1000)),
+  60 * 1000
+);
+const UNIFIED_SUBSCRIPTION_PLAN_ID = "PLAN-CREDISYNC-MONTHLY";
+const UNIFIED_SUBSCRIPTION_PLAN_CODE = "credisync_monthly";
 const SUBSCRIPTION_PLAN_CACHE_TTL_MS = 60 * 1000;
 const PASSWORD_RESET_CODE_TTL_MS = 15 * 60 * 1000;
 const PASSWORD_RESET_MAX_REQUESTS_PER_WINDOW = 5;
@@ -81,11 +96,13 @@ const PASSWORD_CHANGE_MIN_LENGTH = 8;
 const CLIENT_DIST_DIR = path.resolve(__dirname, "../dist");
 const HAS_CLIENT_DIST = fs.existsSync(path.join(CLIENT_DIST_DIR, "index.html"));
 const HAS_WEB_PUSH_CONFIG = Boolean(PUSH_VAPID_PUBLIC_KEY && PUSH_VAPID_PRIVATE_KEY);
-const HAS_SENDGRID_CONFIG = Boolean(SENDGRID_API_KEY && SENDGRID_FROM_EMAIL);
+const HAS_RESEND_CONFIG = Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
 let subscriptionPlanCache = {
   expiresAt: 0,
   plans: null
 };
+let tenantSubscriptionMaintenancePromise = null;
+let tenantSubscriptionMaintenanceNextRunAt = 0;
 const passwordResetRateLimits = new Map();
 
 function invalidateSubscriptionPlanCache() {
@@ -284,6 +301,8 @@ if (HAS_WEB_PUSH_CONFIG) {
     console.error(error && error.message ? error.message : error);
     process.exit(1);
   }
+} else {
+  console.warn("[CONFIG WARNING] Web push disabled. Define PUSH_VAPID_PUBLIC_KEY and PUSH_VAPID_PRIVATE_KEY.");
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_CLIENT_KEY, {
@@ -344,7 +363,8 @@ function defaultSettings() {
     graceDays: 3,
     autoApprovalScore: 720,
     maxDebtToIncome: 40,
-    capitalBudget: 0
+    capitalBudget: 0,
+    currency: DEFAULT_SUBSCRIPTION_CURRENCY
   };
 }
 
@@ -378,87 +398,34 @@ function defaultUserCalendarIntegration() {
 function defaultPlanFeatures() {
   return {
     calendarIcsEnabled: true,
-    advancedReportsEnabled: false,
-    exportsEnabled: false,
-    brandingEnabled: false,
-    prioritySupport: false
+    advancedReportsEnabled: true,
+    exportsEnabled: true,
+    brandingEnabled: true,
+    prioritySupport: true
   };
 }
 
 function defaultPlanLimits() {
   return {
-    maxUsers: 1,
-    maxCustomers: 100,
-    maxActiveLoans: 150
+    maxUsers: 100000,
+    maxCustomers: 1000000,
+    maxActiveLoans: 1000000
   };
 }
 
 function defaultSubscriptionPlans() {
   return [
     {
-      id: "PLAN-STARTER",
-      code: "starter",
-      name: "Starter",
-      description: "Operacion inicial con limites base.",
-      priceMonthly: 19,
+      id: UNIFIED_SUBSCRIPTION_PLAN_ID,
+      code: UNIFIED_SUBSCRIPTION_PLAN_CODE,
+      name: "CrediSync Mensual",
+      description: "Suscripcion mensual con acceso completo a todas las funciones del sistema.",
+      priceMonthly: 0,
       currency: DEFAULT_SUBSCRIPTION_CURRENCY,
       billingCycle: DEFAULT_SUBSCRIPTION_CYCLE,
       isActive: true,
-      features: {
-        ...defaultPlanFeatures(),
-        calendarIcsEnabled: false
-      },
-      limits: {
-        ...defaultPlanLimits(),
-        maxUsers: 1,
-        maxCustomers: 120,
-        maxActiveLoans: 180
-      }
-    },
-    {
-      id: "PLAN-GROWTH",
-      code: "growth",
-      name: "Growth",
-      description: "Para equipos con mayor volumen operativo.",
-      priceMonthly: 49,
-      currency: DEFAULT_SUBSCRIPTION_CURRENCY,
-      billingCycle: DEFAULT_SUBSCRIPTION_CYCLE,
-      isActive: true,
-      features: {
-        ...defaultPlanFeatures(),
-        calendarIcsEnabled: true,
-        advancedReportsEnabled: true
-      },
-      limits: {
-        ...defaultPlanLimits(),
-        maxUsers: 4,
-        maxCustomers: 800,
-        maxActiveLoans: 1300
-      }
-    },
-    {
-      id: "PLAN-PRO",
-      code: "pro",
-      name: "Pro",
-      description: "Sin limites estrictos para crecimiento premium.",
-      priceMonthly: 99,
-      currency: DEFAULT_SUBSCRIPTION_CURRENCY,
-      billingCycle: DEFAULT_SUBSCRIPTION_CYCLE,
-      isActive: true,
-      features: {
-        ...defaultPlanFeatures(),
-        calendarIcsEnabled: true,
-        advancedReportsEnabled: true,
-        exportsEnabled: true,
-        brandingEnabled: true,
-        prioritySupport: true
-      },
-      limits: {
-        ...defaultPlanLimits(),
-        maxUsers: 20,
-        maxCustomers: 10000,
-        maxActiveLoans: 25000
-      }
+      features: defaultPlanFeatures(),
+      limits: defaultPlanLimits()
     }
   ];
 }
@@ -472,14 +439,14 @@ function defaultSubscriptionSummary() {
     planCode: starter.code,
     planName: starter.name,
     description: starter.description,
-    status: "trial",
+    status: "active",
     billingCycle: starter.billingCycle,
     priceMonthly: starter.priceMonthly,
     currency: starter.currency,
     currentPeriodStart: isoToday(),
     currentPeriodEnd: addDaysToDateKey(isoToday(), DEFAULT_BILLING_PERIOD_DAYS),
     nextBillingDate: addDaysToDateKey(isoToday(), DEFAULT_BILLING_PERIOD_DAYS),
-    trialEndsAt: addDaysToDateKey(isoToday(), DEFAULT_TRIAL_DAYS),
+    trialEndsAt: "",
     suspendedAt: null,
     cancelledAt: null,
     notes: "",
@@ -616,6 +583,68 @@ function formatDateLabel(value) {
   return `${day}/${month}/${year}`;
 }
 
+function buildEmailFromHeader() {
+  if (!RESEND_FROM_EMAIL) {
+    return "";
+  }
+  return RESEND_FROM_NAME ? `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>` : RESEND_FROM_EMAIL;
+}
+
+async function sendEmailViaResend(payload) {
+  if (!HAS_RESEND_CONFIG) {
+    const error = new Error("El envio de correos no esta configurado. Falta RESEND_API_KEY o RESEND_FROM_EMAIL.");
+    error.status = 503;
+    throw error;
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "User-Agent": "credisync-server/1.0"
+    },
+    body: JSON.stringify({
+      from: buildEmailFromHeader(),
+      to: Array.isArray(payload.to) ? payload.to.filter(Boolean) : [String(payload.to || "").trim()].filter(Boolean),
+      reply_to: RESEND_REPLY_TO_EMAIL ? [RESEND_REPLY_TO_EMAIL] : undefined,
+      subject: String(payload.subject || "").trim(),
+      html: String(payload.html || "").trim(),
+      text: String(payload.text || "").trim() || undefined,
+      attachments: Array.isArray(payload.attachments) ? payload.attachments : undefined
+    })
+  });
+
+  if (!response.ok) {
+    let message = `No se pudo enviar el correo (${response.status})`;
+    try {
+      const details = await response.json();
+      const errorText =
+        details?.message
+        || details?.error
+        || details?.errors?.[0]?.message
+        || details?.name;
+      if (errorText) {
+        message = String(errorText);
+      }
+    } catch (_error) {
+      const raw = await response.text();
+      if (raw) {
+        message = raw;
+      }
+    }
+
+    const error = new Error(message);
+    error.status = 502;
+    throw error;
+  }
+
+  const data = await response.json().catch(() => ({}));
+  return {
+    id: data?.id || null
+  };
+}
+
 async function getTenantName(tenantId) {
   const { data, error } = await supabase
     .from("tenants")
@@ -705,17 +734,17 @@ async function buildPaymentReceiptContext(user, paymentId) {
       const snapshotBefore = interestOnlySnapshotAtDate(loan, loanSettings, paymentsBeforeTarget, referenceDate)
         || interestOnlySnapshotAtDate(loan, loanSettings, [], referenceDate)
         || {
-          principalOutstanding: Math.max(round2(Number(loan.principal || 0)), 0),
-          principalPaidToDate: 0,
-          interestOutstanding: 0,
-          interestLateFeeOutstanding: 0,
-          principalLateFeeOutstanding: 0,
-          lateFeeOutstanding: 0,
-          maturityPrincipalDue: 0,
-          totalDueBeforePrincipal: 0,
-          totalOutstanding: Math.max(round2(Number(loan.principal || 0)), 0),
-          nextDueDate: null
-        };
+        principalOutstanding: Math.max(round2(Number(loan.principal || 0)), 0),
+        principalPaidToDate: 0,
+        interestOutstanding: 0,
+        interestLateFeeOutstanding: 0,
+        principalLateFeeOutstanding: 0,
+        lateFeeOutstanding: 0,
+        maturityPrincipalDue: 0,
+        totalDueBeforePrincipal: 0,
+        totalOutstanding: Math.max(round2(Number(loan.principal || 0)), 0),
+        nextDueDate: null
+      };
       const snapshotAfter = interestOnlySnapshotAtDate(loan, loanSettings, paymentsUpToTarget, referenceDate) || snapshotBefore;
 
       const interestLateFeeBefore = Math.max(round2(snapshotBefore.interestLateFeeOutstanding || 0), 0);
@@ -1072,6 +1101,511 @@ function generatePaymentReceiptPdfBuffer(receiptContext) {
   });
 }
 
+function buildBillingInvoiceEmailHtml(invoiceContext) {
+  const ownerName = escapeHtml(invoiceContext?.ownerName || "Cliente");
+  const tenantName = escapeHtml(invoiceContext?.tenantName || "CrediSync");
+  const invoiceId = escapeHtml(invoiceContext?.invoice?.id || "-");
+  const dueDate = escapeHtml(formatDateLabel(invoiceContext?.invoice?.dueDate || ""));
+  const periodLabel = escapeHtml(`${formatDateLabel(invoiceContext?.invoice?.periodStart)} - ${formatDateLabel(invoiceContext?.invoice?.periodEnd)}`);
+  const amountLabel = escapeHtml(formatMoneyValue(invoiceContext?.invoice?.amount || 0, invoiceContext?.invoice?.currency));
+
+  return `
+<html>
+  <body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
+    <table role="presentation" style="width:100%;border-collapse:collapse;">
+      <tr>
+        <td style="padding:28px 16px;">
+          <table role="presentation" style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+            <tr>
+              <td style="padding:24px 28px;background:#0f172a;color:#ffffff;">
+                <h1 style="margin:0;font-size:20px;">Factura de suscripcion</h1>
+                <p style="margin:8px 0 0 0;opacity:.85;font-size:13px;">${tenantName}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 28px;">
+                <p style="margin:0 0 14px 0;font-size:14px;">Hola ${ownerName},</p>
+                <p style="margin:0 0 20px 0;font-size:14px;line-height:1.6;">Adjuntamos la factura de tu suscripcion en CrediSync para el periodo <strong>${periodLabel}</strong>.</p>
+                <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;">
+                  <tr><td style="padding:6px 0;color:#6b7280;">Factura</td><td style="padding:6px 0;text-align:right;"><strong>${invoiceId}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Monto</td><td style="padding:6px 0;text-align:right;"><strong>${amountLabel}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Vencimiento</td><td style="padding:6px 0;text-align:right;"><strong>${dueDate}</strong></td></tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function generateBillingInvoicePdfBuffer(invoiceContext) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 48 });
+    const chunks = [];
+
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("error", reject);
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+
+    const invoice = invoiceContext?.invoice || {};
+    const ownerName = invoiceContext?.ownerName || "Cliente";
+    const currency = normalizeCurrency(invoice.currency, DEFAULT_SUBSCRIPTION_CURRENCY);
+    const amountLabel = formatMoneyValue(invoice.amount || 0, currency);
+    const dueDate = formatDateLabel(invoice.dueDate || "");
+    const issuedAt = formatDateLabel(invoice.issuedAt || invoice.createdAt || "");
+    const periodStart = formatDateLabel(invoice.periodStart || "");
+    const periodEnd = formatDateLabel(invoice.periodEnd || "");
+    const notes = String(invoice.notes || "").trim() || DEFAULT_BILLING_INVOICE_NOTE;
+    const blue = "#2952e3";
+    const ink = "#111827";
+    const muted = "#6b7280";
+    const line = "#e5e7eb";
+    const soft = "#f8fafc";
+
+    doc.roundedRect(24, 24, doc.page.width - 48, doc.page.height - 48, 18).fillAndStroke("#ffffff", "#edf1f7");
+    doc.roundedRect(48, 52, doc.page.width - 96, 88, 16).fill(blue);
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(24).text("FACTURA", 72, 88);
+
+    const headerInfoX = 336;
+    const headerInfoY = 72;
+    const headerInfoWidth = 176;
+    doc.save();
+    doc.roundedRect(headerInfoX, headerInfoY, headerInfoWidth, 52, 10).fillOpacity(0.12).fillAndStroke("#ffffff", "#ffffff");
+    doc.restore();
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(10).text(`Factura N.: ${invoice.id || "-"}`, headerInfoX + 16, headerInfoY + 12, {
+      width: headerInfoWidth - 32,
+      align: "left"
+    });
+    doc.font("Helvetica").fontSize(10).text(`Emitida: ${issuedAt}`, headerInfoX + 16, headerInfoY + 28, {
+      width: headerInfoWidth - 32,
+      align: "left"
+    });
+    doc.text(`Vence: ${dueDate}`, headerInfoX + 16, headerInfoY + 42, {
+      width: headerInfoWidth - 32,
+      align: "left"
+    });
+
+    doc.roundedRect(72, 248, 220, 88, 12).fillAndStroke(soft, line);
+    doc.fillColor(muted).font("Helvetica-Bold").fontSize(9).text("FACTURAR A", 88, 264);
+    doc.fillColor(ink).font("Helvetica-Bold").fontSize(12).text(ownerName, 88, 284, { width: 180 });
+    doc.font("Helvetica").fontSize(10).fillColor(muted).text(invoiceContext?.ownerEmail || "-", 88, 304, { width: 180 });
+
+    doc.roundedRect(316, 248, 220, 88, 12).fillAndStroke(soft, line);
+    doc.fillColor(muted).font("Helvetica-Bold").fontSize(9).text("RESUMEN", 332, 264);
+    doc.fillColor(ink).font("Helvetica-Bold").fontSize(20).text(amountLabel, 332, 286, { width: 180 });
+    doc.font("Helvetica").fontSize(10).fillColor(muted).text(`Periodo: ${periodStart} - ${periodEnd}`, 332, 314, { width: 180 });
+
+    doc.fillColor(ink).font("Helvetica-Bold").fontSize(11).text("Detalle", 72, 372);
+    doc.roundedRect(72, 396, 464, 118, 10).stroke(line);
+    doc.font("Helvetica-Bold").fontSize(10).text("Concepto", 88, 414);
+    doc.text("Periodo", 292, 414);
+    doc.text("Monto", 450, 414, { width: 70, align: "right" });
+    doc.moveTo(88, 434).lineTo(520, 434).stroke(line);
+    doc.font("Helvetica").fontSize(10).fillColor(ink).text("Suscripcion CrediSync", 88, 450, { width: 180 });
+    doc.text(`${periodStart} - ${periodEnd}`, 292, 450, { width: 120 });
+    doc.font("Helvetica-Bold").text(amountLabel, 450, 450, { width: 70, align: "right" });
+
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(ink).text("Notas", 72, 606);
+    doc.font("Helvetica").fontSize(10).fillColor(muted).text(notes, 72, 624, { width: 464 });
+
+    doc.moveTo(72, 714).lineTo(536, 714).stroke(line);
+    doc.fillColor(ink).font("Helvetica-Bold").fontSize(12).text("Total", 382, 732);
+    doc.text(amountLabel, 430, 732, { width: 90, align: "right" });
+
+    doc.end();
+  });
+}
+
+async function buildBillingInvoiceEmailContext(tenantId, invoiceRow) {
+  const [tenant, ownerUser, subscription] = await Promise.all([
+    getTenantById(tenantId),
+    getTenantOwnerUser(tenantId),
+    ensureTenantSubscription(tenantId)
+  ]);
+
+  const invoice = mapInvoiceRow(invoiceRow);
+  return {
+    tenantName: tenant?.name || "CrediSync",
+    ownerName: ownerUser?.name || ownerUser?.email || "Cliente",
+    ownerEmail: String(ownerUser?.email || "").trim(),
+    subscription,
+    invoice
+  };
+}
+
+async function sendBillingInvoiceEmail(invoiceContext) {
+  const ownerEmail = String(invoiceContext?.ownerEmail || "").trim();
+  if (!ownerEmail) {
+    const error = new Error("El tenant no tiene un correo propietario configurado");
+    error.status = 400;
+    throw error;
+  }
+
+  const pdfBuffer = await generateBillingInvoicePdfBuffer(invoiceContext);
+  const invoiceId = invoiceContext?.invoice?.id || "factura";
+
+  return sendEmailViaResend({
+    to: [ownerEmail],
+    subject: `Factura ${invoiceId} de CrediSync`,
+    html: buildBillingInvoiceEmailHtml(invoiceContext),
+    text: `Adjuntamos la factura ${invoiceId} de tu suscripcion en CrediSync.`,
+    attachments: [
+      {
+        filename: `factura-${invoiceId}.pdf`,
+        content: pdfBuffer.toString("base64")
+      }
+    ]
+  });
+}
+
+function normalizeBillingPaymentMethod(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "efectivo") {
+    return "Efectivo";
+  }
+  return "Transferencia";
+}
+
+function parseBillingPaymentStoredNotes(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return {
+      publicNote: "",
+      proofImageData: "",
+      proofImageName: "",
+      proofImageType: "",
+      hasProofImage: false
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.kind === BILLING_PAYMENT_META_KIND) {
+      const proofImageData = String(parsed.proofImageData || "").trim();
+      const proofImageName = String(parsed.proofImageName || "").trim();
+      const proofImageType = String(parsed.proofImageType || "").trim();
+      return {
+        publicNote: String(parsed.publicNote || "").trim(),
+        proofImageData,
+        proofImageName,
+        proofImageType,
+        hasProofImage: Boolean(proofImageData)
+      };
+    }
+  } catch (_error) {
+    // keep backward compatibility with plain text notes
+  }
+
+  return {
+    publicNote: raw,
+    proofImageData: "",
+    proofImageName: "",
+    proofImageType: "",
+    hasProofImage: false
+  };
+}
+
+function buildBillingPaymentStoredNotes(payload) {
+  const publicNote = String(payload?.publicNote || "").trim();
+  const proofImageData = String(payload?.proofImageData || "").trim();
+  const proofImageName = String(payload?.proofImageName || "").trim();
+  const proofImageType = String(payload?.proofImageType || "").trim();
+
+  if (!proofImageData) {
+    return publicNote;
+  }
+
+  return JSON.stringify({
+    kind: BILLING_PAYMENT_META_KIND,
+    publicNote,
+    proofImageData,
+    proofImageName,
+    proofImageType
+  });
+}
+
+function parseBillingPaymentProofPayload(body) {
+  const rawDataUrl = String(body?.proofImageData || "").trim();
+  if (!rawDataUrl) {
+    return null;
+  }
+
+  const match = rawDataUrl.match(/^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) {
+    const error = new Error("El comprobante debe ser una imagen PNG, JPG o WEBP valida");
+    error.status = 400;
+    throw error;
+  }
+
+  const contentType = String(match[1] || "").toLowerCase() === "image/jpg" ? "image/jpeg" : String(match[1] || "").toLowerCase();
+  const bytes = Buffer.from(match[2], "base64");
+  if (!bytes.length) {
+    const error = new Error("No se pudo procesar la imagen del comprobante");
+    error.status = 400;
+    throw error;
+  }
+
+  if (bytes.length > MAX_BILLING_PAYMENT_PROOF_BYTES) {
+    const error = new Error("El comprobante no puede superar 2 MB");
+    error.status = 400;
+    throw error;
+  }
+
+  const normalizedName = String(body?.proofImageName || "").trim().replace(/[^\w.\- ]+/g, "").slice(0, 120);
+
+  return {
+    proofImageData: rawDataUrl,
+    proofImageName: normalizedName || "comprobante-transferencia",
+    proofImageType: contentType
+  };
+}
+
+function dataUrlImageToBuffer(dataUrl) {
+  const raw = String(dataUrl || "").trim();
+  const match = raw.match(/^data:(image\/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  try {
+    return {
+      contentType: String(match[1] || "").toLowerCase(),
+      buffer: Buffer.from(match[2], "base64")
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function buildBillingPaymentConfirmationEmailHtml(paymentContext) {
+  const ownerName = escapeHtml(paymentContext?.ownerName || "Cliente");
+  const tenantName = escapeHtml(paymentContext?.tenantName || "CrediSync");
+  const invoiceId = escapeHtml(paymentContext?.invoice?.id || "-");
+  const paymentId = escapeHtml(paymentContext?.payment?.id || "-");
+  const paymentDate = escapeHtml(formatDateLabel(paymentContext?.payment?.receivedAt || paymentContext?.payment?.createdAt || ""));
+  const paymentMethod = escapeHtml(paymentContext?.payment?.method || "-");
+  const reference = escapeHtml(paymentContext?.payment?.reference || "Sin referencia");
+  const proofLabel = paymentContext?.payment?.hasProofImage
+    ? `Comprobante adjunto: ${paymentContext?.payment?.proofImageName || "Transferencia"}`
+    : "";
+  const notes = escapeHtml(paymentContext?.payment?.notes || proofLabel || "Pago confirmado correctamente.");
+  const currency = normalizeCurrency(paymentContext?.invoice?.currency, DEFAULT_SUBSCRIPTION_CURRENCY);
+  const paymentAmountLabel = escapeHtml(formatMoneyValue(paymentContext?.payment?.amount || 0, currency));
+  const invoiceAmountLabel = escapeHtml(formatMoneyValue(paymentContext?.invoice?.amount || 0, currency));
+  const confirmedPaidLabel = escapeHtml(formatMoneyValue(paymentContext?.settlement?.confirmedPaidAmount || paymentContext?.payment?.amount || 0, currency));
+  const outstandingAmount = round2(Number(paymentContext?.settlement?.outstandingAmount || 0));
+  const outstandingLabel = escapeHtml(formatMoneyValue(outstandingAmount, currency));
+  const periodStart = escapeHtml(formatDateLabel(paymentContext?.invoice?.periodStart || ""));
+  const periodEnd = escapeHtml(formatDateLabel(paymentContext?.invoice?.periodEnd || ""));
+  const isFullyPaid = outstandingAmount <= 0.009 || normalizeInvoiceStatus(paymentContext?.invoice?.status, "pending") === "paid";
+  const statusLabel = isFullyPaid ? "Pagada" : "Pago parcial aplicado";
+  const thankYouCopy = isFullyPaid
+    ? "Gracias por completar el pago de tu factura. La factura ha quedado saldada por completo."
+    : `Gracias por tu pago. Lo hemos aplicado a tu factura y el saldo pendiente actual es ${outstandingLabel}.`;
+
+  return `
+<html>
+  <body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
+    <table role="presentation" style="width:100%;border-collapse:collapse;">
+      <tr>
+        <td style="padding:28px 16px;">
+          <table role="presentation" style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+            <tr>
+              <td style="padding:24px 28px;background:#0f172a;color:#ffffff;">
+                <h1 style="margin:0;font-size:20px;">Pago aplicado a tu factura</h1>
+                <p style="margin:8px 0 0 0;opacity:.85;font-size:13px;">${tenantName}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 28px;">
+                <p style="margin:0 0 14px 0;font-size:14px;">Hola ${ownerName},</p>
+                <p style="margin:0 0 20px 0;font-size:14px;line-height:1.6;">${thankYouCopy}</p>
+                <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;">
+                  <tr><td style="padding:6px 0;color:#6b7280;">Factura</td><td style="padding:6px 0;text-align:right;"><strong>${invoiceId}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Estado</td><td style="padding:6px 0;text-align:right;"><strong>${statusLabel}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Periodo facturado</td><td style="padding:6px 0;text-align:right;"><strong>${periodStart} - ${periodEnd}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Monto factura</td><td style="padding:6px 0;text-align:right;"><strong>${invoiceAmountLabel}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Pago recibido</td><td style="padding:6px 0;text-align:right;"><strong>${paymentAmountLabel}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Pagado acumulado</td><td style="padding:6px 0;text-align:right;"><strong>${confirmedPaidLabel}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Saldo pendiente</td><td style="padding:6px 0;text-align:right;"><strong>${outstandingLabel}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">ID pago</td><td style="padding:6px 0;text-align:right;"><strong>${paymentId}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Fecha de registro</td><td style="padding:6px 0;text-align:right;"><strong>${paymentDate}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Metodo</td><td style="padding:6px 0;text-align:right;"><strong>${paymentMethod}</strong></td></tr>
+                  <tr><td style="padding:6px 0;color:#6b7280;">Referencia</td><td style="padding:6px 0;text-align:right;"><strong>${reference}</strong></td></tr>
+                </table>
+                <div style="margin-top:20px;padding:16px;border-radius:10px;background:#f8fafc;border:1px solid #e5e7eb;">
+                  <p style="margin:0 0 8px 0;font-size:13px;color:#475569;"><strong>Nota del pago</strong></p>
+                  <p style="margin:0;font-size:13px;line-height:1.6;color:#334155;">${notes}</p>
+                </div>
+                <p style="margin:20px 0 0 0;font-size:13px;line-height:1.6;color:#4b5563;">Adjuntamos tu recibo de pago en PDF para tu respaldo.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function generateBillingPaymentReceiptPdfBuffer(paymentContext) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 48 });
+    const chunks = [];
+
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("error", reject);
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+
+    const invoice = paymentContext?.invoice || {};
+    const payment = paymentContext?.payment || {};
+    const settlement = paymentContext?.settlement || {};
+    const tenantName = paymentContext?.tenantName || "CrediSync";
+    const ownerName = paymentContext?.ownerName || "Cliente";
+    const ownerEmail = String(paymentContext?.ownerEmail || "-").trim() || "-";
+    const currency = normalizeCurrency(invoice.currency || payment.currency, DEFAULT_SUBSCRIPTION_CURRENCY);
+    const invoiceAmountLabel = formatMoneyValue(invoice.amount || 0, currency);
+    const paymentAmountLabel = formatMoneyValue(payment.amount || 0, currency);
+    const confirmedPaidLabel = formatMoneyValue(settlement.confirmedPaidAmount || payment.amount || 0, currency);
+    const outstandingAmount = round2(Number(settlement.outstandingAmount || 0));
+    const outstandingLabel = formatMoneyValue(outstandingAmount, currency);
+    const issuedAt = formatDateLabel(payment.receivedAt || payment.createdAt || "");
+    const invoiceIssuedAt = formatDateLabel(invoice.issuedAt || invoice.createdAt || "");
+    const periodStart = formatDateLabel(invoice.periodStart || "");
+    const periodEnd = formatDateLabel(invoice.periodEnd || "");
+    const paymentMethod = String(payment.method || "-").trim() || "-";
+    const reference = String(payment.reference || "-").trim() || "-";
+    const proofImage = payment.proofImageData ? dataUrlImageToBuffer(payment.proofImageData) : null;
+    const hasProofThumbnail = Boolean(proofImage?.buffer?.length);
+    const isFullyPaid = outstandingAmount <= 0.009 || normalizeInvoiceStatus(invoice.status, "pending") === "paid";
+    const green = "#0f8a5f";
+    const greenSoft = "#e7f8ee";
+    const ink = "#111827";
+    const muted = "#6b7280";
+    const line = "#e5e7eb";
+    const soft = "#f8fafc";
+    const accent = isFullyPaid ? "PAGADA" : "ABONO APLICADO";
+
+    doc.roundedRect(24, 24, doc.page.width - 48, doc.page.height - 48, 18).fillAndStroke("#ffffff", "#edf1f7");
+    doc.roundedRect(48, 52, doc.page.width - 96, 96, 16).fill(green);
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(24).text("RECIBO DE PAGO", 72, 82);
+    doc.font("Helvetica").fontSize(11).text(tenantName, 72, 114, { width: 260 });
+
+    doc.save();
+    doc.roundedRect(392, 70, 128, 58, 12).fillOpacity(0.16).fillAndStroke("#ffffff", "#ffffff");
+    doc.restore();
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(9.5).text("RECIBO N.", 406, 82, { width: 100, align: "left" });
+    doc.font("Helvetica-Bold").fontSize(11).text(payment.id || "-", 406, 96, { width: 100, align: "left" });
+    doc.font("Helvetica-Bold").fontSize(9.5).text("FECHA", 406, 110, { width: 100, align: "left" });
+    doc.font("Helvetica").fontSize(10).text(issuedAt, 450, 110, { width: 56, align: "right" });
+
+    doc.roundedRect(72, 172, 220, 90, 12).fillAndStroke(soft, line);
+    doc.fillColor(muted).font("Helvetica-Bold").fontSize(9).text("RECIBIDO DE", 88, 188);
+    doc.fillColor(ink).font("Helvetica-Bold").fontSize(12).text(ownerName, 88, 208, { width: 180 });
+    doc.font("Helvetica").fontSize(10).fillColor(muted).text(ownerEmail, 88, 228, { width: 180 });
+
+    doc.roundedRect(316, 172, 220, 90, 12).fillAndStroke(greenSoft, line);
+    doc.fillColor(green).font("Helvetica-Bold").fontSize(9).text("ESTADO DEL PAGO", 332, 188);
+    doc.font("Helvetica-Bold").fontSize(20).text(paymentAmountLabel, 332, 208, { width: 180 });
+    doc.font("Helvetica").fontSize(10).fillColor(muted).text(accent, 332, 236, { width: 180 });
+
+    doc.fillColor(ink).font("Helvetica-Bold").fontSize(11).text("Detalle del recibo", 72, 302);
+    doc.roundedRect(72, 326, 464, 164, 10).stroke(line);
+    doc.font("Helvetica-Bold").fontSize(10).text("Factura asociada", 88, 344);
+    doc.text("Periodo", 292, 344);
+    doc.text("Monto", 450, 344, { width: 70, align: "right" });
+    doc.moveTo(88, 364).lineTo(520, 364).stroke(line);
+    doc.font("Helvetica").fontSize(10).fillColor(ink).text(invoice.id || "-", 88, 380, { width: 180 });
+    doc.text(`${periodStart} - ${periodEnd}`, 292, 380, { width: 120 });
+    doc.font("Helvetica-Bold").text(invoiceAmountLabel, 450, 380, { width: 70, align: "right" });
+
+    doc.moveTo(88, 410).lineTo(520, 410).stroke(line);
+    doc.font("Helvetica-Bold").fontSize(10).text("Pago registrado", 88, 426);
+    doc.text("Metodo", 292, 426);
+    doc.text("Monto", 450, 426, { width: 70, align: "right" });
+    doc.moveTo(88, 446).lineTo(520, 446).stroke(line);
+    doc.font("Helvetica").fontSize(10).text(payment.id || "-", 88, 462, { width: 180 });
+    doc.text(paymentMethod, 292, 462, { width: 120 });
+    doc.font("Helvetica-Bold").text(paymentAmountLabel, 450, 462, { width: 70, align: "right" });
+
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(ink).text("Resumen", 72, 530);
+    doc.roundedRect(72, 554, 220, 112, 10).fillAndStroke(soft, line);
+    doc.roundedRect(316, 554, 220, 112, 10).fillAndStroke(soft, line);
+    if (hasProofThumbnail) {
+      doc.fillColor(muted).font("Helvetica-Bold").fontSize(9).text("COMPROBANTE RECIBIDO", 88, 570);
+      doc.save();
+      doc.roundedRect(88, 588, 188, 56, 8).clip();
+      doc.image(proofImage.buffer, 88, 588, { fit: [188, 56], align: "center", valign: "center" });
+      doc.restore();
+      doc.roundedRect(88, 588, 188, 56, 8).stroke("#d6dde8");
+      doc.fillColor(muted).font("Helvetica").fontSize(8.5).text("Miniatura del comprobante validado", 88, 648, { width: 188 });
+    } else {
+      doc.fillColor(muted).font("Helvetica-Bold").fontSize(9).text("REFERENCIA", 88, 570);
+      doc.fillColor(ink).font("Helvetica").fontSize(10).text(reference, 88, 590, { width: 188 });
+    }
+    doc.fillColor(muted).font("Helvetica-Bold").fontSize(9).text("FACTURA EMITIDA", 332, 570);
+    doc.fillColor(ink).font("Helvetica").fontSize(10).text(invoiceIssuedAt, 332, 590, { width: 180 });
+    doc.fillColor(muted).font("Helvetica-Bold").fontSize(9).text("PAGADO ACUMULADO", 332, 616);
+    doc.fillColor(ink).font("Helvetica-Bold").fontSize(13).text(confirmedPaidLabel, 332, 634, { width: 180 });
+
+    doc.roundedRect(344, 688, 176, 76, 12).fillAndStroke("#ffffff", line);
+    doc.fillColor(muted).font("Helvetica-Bold").fontSize(9).text("SALDO PENDIENTE", 360, 704, { width: 144, align: "center" });
+    doc.fillColor(ink).font("Helvetica-Bold").fontSize(18).text(outstandingLabel, 360, 724, { width: 144, align: "center" });
+    doc.fillColor(green).font("Helvetica-Bold").fontSize(9).text("Gracias por tu pago.", 360, 748, { width: 144, align: "center" });
+
+    doc.end();
+  });
+}
+
+async function buildBillingPaymentEmailContext(tenantId, invoiceRow, paymentRow, settlement) {
+  const invoiceContext = await buildBillingInvoiceEmailContext(tenantId, invoiceRow);
+  const paymentMeta = parseBillingPaymentStoredNotes(paymentRow?.notes);
+  return {
+    ...invoiceContext,
+    payment: {
+      ...mapBillingPaymentRow(paymentRow),
+      proofImageData: paymentMeta.proofImageData || ""
+    },
+    settlement: settlement
+      ? {
+        amount: Number(settlement.amount || invoiceContext?.invoice?.amount || 0),
+        confirmedPaidAmount: Number(settlement.confirmedPaidAmount || 0),
+        outstandingAmount: Number(settlement.outstandingAmount || 0),
+        status: normalizeInvoiceStatus(settlement.expectedStatus, invoiceContext?.invoice?.status || "pending")
+      }
+      : null
+  };
+}
+
+async function sendBillingPaymentConfirmationEmail(paymentContext) {
+  const ownerEmail = String(paymentContext?.ownerEmail || "").trim();
+  if (!ownerEmail) {
+    const error = new Error("El tenant no tiene un correo propietario configurado");
+    error.status = 400;
+    throw error;
+  }
+
+  const pdfBuffer = await generateBillingPaymentReceiptPdfBuffer(paymentContext);
+  const invoiceId = paymentContext?.invoice?.id || "factura";
+  const paymentId = paymentContext?.payment?.id || "pago";
+
+  return sendEmailViaResend({
+    to: [ownerEmail],
+    subject: `Pago recibido para la factura ${invoiceId}`,
+    html: buildBillingPaymentConfirmationEmailHtml(paymentContext),
+    text: `Gracias por tu pago. Registramos el pago ${paymentId} aplicado a la factura ${invoiceId}. Adjuntamos tu recibo de pago en PDF.`,
+    attachments: [
+      {
+        filename: `recibo-pago-${paymentId}.pdf`,
+        content: pdfBuffer.toString("base64")
+      }
+    ]
+  });
+}
+
 function normalizeRole(value, fallback) {
   const raw = String(value || "").trim();
   const normalized = raw.toLowerCase().replace(/[\s_-]+/g, "");
@@ -1161,6 +1695,51 @@ function buildAutomatedNotifications(state, tenantId) {
     }
   });
 
+  (state.loans || []).forEach((loan) => {
+    if (String(loan?.status || "").toLowerCase() === "paid") {
+      return;
+    }
+
+    const customer = customersById.get(loan.customerId);
+    const customerName = customer ? customer.name : "Cliente";
+    const dueDate = loanNextDueDate(loan);
+    const overdueDays = daysOverdue(loan, graceDays);
+
+    if (dueDate && startOfDay(dueDate).getTime() === today.getTime()) {
+      notifications.push(notificationPayload({
+        code: `loan-${loan.id}-due-${todayISO}`,
+        tenantId,
+        type: "due_today",
+        severity: overdueDays > 0 ? "critical" : "warning",
+        title: "Cobro programado para hoy",
+        message: `${customerName} tiene un cobro previsto hoy en ${loan.id}.`,
+        entityType: "loan",
+        entityId: loan.id,
+        eventDate: todayISO,
+        meta: { customerId: loan.customerId, loanId: loan.id }
+      }));
+    }
+
+    const shouldNotifyOverdue =
+      overdueDays > 0
+      && (overdueDays === 1 || overdueDays === 3 || overdueDays === 7 || overdueDays % 7 === 0);
+
+    if (shouldNotifyOverdue) {
+      notifications.push(notificationPayload({
+        code: `loan-${loan.id}-overdue-${overdueDays}`,
+        tenantId,
+        type: "overdue_alert",
+        severity: overdueDays >= 7 ? "critical" : "warning",
+        title: overdueDays >= 7 ? "Mora critica detectada" : "Prestamo en mora",
+        message: `${customerName} acumula ${overdueDays} dia(s) de atraso en ${loan.id}.`,
+        entityType: "loan",
+        entityId: loan.id,
+        eventDate: todayISO,
+        meta: { customerId: loan.customerId, loanId: loan.id, overdueDays }
+      }));
+    }
+  });
+
   const budget = Math.max(Number(state?.settings?.capitalBudget) || 0, 0);
   if (budget > 0) {
     const committed = capitalCommittedFromLoans(state.loans || []);
@@ -1173,7 +1752,7 @@ function buildAutomatedNotifications(state, tenantId) {
         type: "capital_alert",
         severity: usagePct >= 95 ? "critical" : "warning",
         title: "Capital disponible bajo",
-        message: `Uso de capital en ${usagePct}%. Disponible ${available.toFixed(2)} USD.`,
+        message: `Uso de capital en ${usagePct}%. Disponible ${available.toFixed(2)} ${DEFAULT_SUBSCRIPTION_CURRENCY}.`,
         entityType: "settings",
         entityId: "capital_budget",
         eventDate: todayISO,
@@ -1206,6 +1785,164 @@ function buildAutomatedNotifications(state, tenantId) {
   return notifications;
 }
 
+function buildAppUrl(pathname, params = {}) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    const normalizedValue = String(value ?? "").trim();
+    if (normalizedValue) {
+      searchParams.set(key, normalizedValue);
+    }
+  });
+
+  const query = searchParams.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
+
+function buildPushPayloadFromNotification(notification) {
+  const type = String(notification?.type || "").trim().toLowerCase();
+  const loanId = String(notification?.meta?.loanId || notification?.entityId || "").trim();
+  const customerId = String(notification?.meta?.customerId || "").trim();
+  const tenantId = String(notification?.meta?.tenantId || notification?.entityId || "").trim();
+  const tenantName = String(notification?.meta?.tenantName || "").trim();
+  const ownerEmail = String(notification?.meta?.ownerEmail || "").trim();
+  const overdueDays = Number(notification?.meta?.overdueDays || 0);
+  const loanDetailUrl = buildAppUrl("/loans", {
+    loanId,
+    status: type === "overdue_alert" ? "overdue" : ""
+  });
+  const customerDetailUrl = buildAppUrl("/customers", { customerId });
+  const tenantDetailUrl = buildAppUrl("/superadmin/tenants", { tenantId });
+
+  if (type === "tenant_signup_alert") {
+    return {
+      type,
+      title: notification.title || "Nuevo cliente registrado",
+      body: notification.message || `${tenantName || "Un nuevo cliente"} ya esta activo en CrediSync.`,
+      url: tenantId ? tenantDetailUrl : "/notifications",
+      tag: `tenant-signup-${notification.code}`,
+      renotify: true,
+      requireInteraction: true,
+      primaryAction: {
+        action: "open-primary",
+        title: tenantId ? "Ver tenant" : "Ver tenants",
+        url: tenantId ? tenantDetailUrl : "/superadmin/tenants"
+      },
+      secondaryAction: {
+        action: "open-notifications",
+        title: "Ver alertas",
+        url: "/notifications"
+      },
+      context: { tenantId, tenantName, ownerEmail }
+    };
+  }
+
+  if (type === "promise_broken") {
+    return {
+      type,
+      title: notification.title || "Promesa incumplida",
+      body: notification.message || "Se detecto una promesa incumplida.",
+      url: customerId ? customerDetailUrl : loanDetailUrl || "/notifications",
+      tag: `promise-broken-${notification.code}`,
+      renotify: true,
+      requireInteraction: true,
+      primaryAction: {
+        action: "open-primary",
+        title: customerId ? "Ver cliente" : "Ver alerta",
+        url: customerId ? customerDetailUrl : "/notifications"
+      },
+      secondaryAction: {
+        action: "open-loan",
+        title: loanId ? "Ver prestamo" : "Prestamos",
+        url: loanId ? loanDetailUrl : "/loans"
+      },
+      context: { loanId, customerId }
+    };
+  }
+
+  if (type === "due_today") {
+    return {
+      type,
+      title: notification.title || "Cobro programado para hoy",
+      body: notification.message || "Tienes un cobro pendiente para hoy.",
+      url: loanId ? loanDetailUrl : "/payments?focus=queue",
+      tag: `due-today-${notification.code}`,
+      renotify: true,
+      requireInteraction: false,
+      primaryAction: {
+        action: "open-primary",
+        title: loanId ? "Ver prestamo" : "Ver cobros",
+        url: loanId ? loanDetailUrl : "/payments?focus=queue"
+      },
+      secondaryAction: {
+        action: "open-customer",
+        title: customerId ? "Ver cliente" : "Clientes",
+        url: customerId ? customerDetailUrl : "/customers"
+      },
+      context: { loanId, customerId }
+    };
+  }
+
+  if (type === "overdue_alert") {
+    return {
+      type,
+      title: notification.title || "Prestamo en mora",
+      body: notification.message || "Se detecto un prestamo vencido.",
+      url: loanId ? loanDetailUrl : "/loans?status=overdue",
+      tag: `overdue-${notification.code}`,
+      renotify: true,
+      requireInteraction: overdueDays >= 7,
+      primaryAction: {
+        action: "open-primary",
+        title: loanId ? "Ver prestamo" : "Ver mora",
+        url: loanId ? loanDetailUrl : "/loans?status=overdue"
+      },
+      secondaryAction: {
+        action: "open-customer",
+        title: customerId ? "Ver cliente" : "Alertas",
+        url: customerId ? customerDetailUrl : "/notifications"
+      },
+      context: { loanId, customerId, overdueDays }
+    };
+  }
+
+  return null;
+}
+
+function buildPaymentReceivedPushPayload(payment, options = {}) {
+  const amount = round2(Number(payment?.amount || 0));
+  const customerName = String(options.customerName || "Cliente").trim() || "Cliente";
+  const loanId = String(payment?.loanId || options.loanId || "").trim();
+  const customerId = String(payment?.customerId || options.customerId || "").trim();
+  const loanDetailUrl = buildAppUrl("/loans", { loanId });
+  const customerDetailUrl = buildAppUrl("/customers", { customerId });
+
+  return {
+    type: "payment_received",
+    title: "Pago registrado",
+    body: `${customerName} pago ${amount.toFixed(2)} ${DEFAULT_SUBSCRIPTION_CURRENCY}${loanId ? ` en ${loanId}` : ""}.`,
+    url: loanId ? loanDetailUrl : "/payments",
+    tag: `payment-${payment?.id || loanId || isoNow()}`,
+    renotify: true,
+    requireInteraction: false,
+    primaryAction: {
+      action: "open-primary",
+      title: loanId ? "Ver prestamo" : "Ver pagos",
+      url: loanId ? loanDetailUrl : "/payments"
+    },
+    secondaryAction: {
+      action: "open-customer",
+      title: customerId ? "Ver cliente" : "Clientes",
+      url: customerId ? customerDetailUrl : "/customers"
+    },
+    context: {
+      paymentId: String(payment?.id || "").trim(),
+      loanId,
+      customerId
+    }
+  };
+}
+
 async function syncAutomatedNotificationsForTenant(tenantId, state) {
   const notifications = buildAutomatedNotifications(state, tenantId);
   if (notifications.length === 0) {
@@ -1218,6 +1955,19 @@ async function syncAutomatedNotificationsForTenant(tenantId, state) {
 
   if (error && !["42P01", "42703"].includes(String(error.code || ""))) {
     throw error;
+  }
+
+  for (const notification of notifications) {
+    const payload = buildPushPayloadFromNotification(notification);
+    if (!payload) {
+      continue;
+    }
+
+    await sendPushPayloadToTenant(tenantId, payload, {
+      deliveryType: PUSH_DELIVERY_TYPE_NOTIFICATION_EVENT,
+      eventKey: notification.code,
+      deliveryDate: String(notification.eventDate || isoToday()).trim() || isoToday()
+    });
   }
 }
 
@@ -1267,6 +2017,15 @@ function buildDailyCollectionSummaryFromState(state, timezone, nowDate) {
 }
 
 function buildPushPayload(summary, tenantName) {
+  const hasDueToday = Number(summary?.dueToday || 0) > 0;
+  const hasOverdue = Number(summary?.overdueCount || 0) > 0;
+  const primaryUrl = hasDueToday
+    ? "/payments?focus=queue"
+    : hasOverdue
+      ? "/loans?status=overdue"
+      : "/dashboard";
+  const primaryTitle = hasDueToday ? "Ver cobros" : hasOverdue ? "Ver mora" : "Abrir panel";
+
   return {
     type: PUSH_DELIVERY_TYPE_DAILY_SUMMARY,
     tenantName: tenantName || "CrediSync",
@@ -1277,26 +2036,200 @@ function buildPushPayload(summary, tenantName) {
     pendingPromises: summary.pendingPromises,
     localDateKey: summary.localDateKey,
     timezone: summary.timezone,
-    url: "/notifications"
+    url: primaryUrl,
+    tag: `daily-summary-${summary.localDateKey}`,
+    renotify: hasDueToday || hasOverdue,
+    requireInteraction: hasOverdue,
+    primaryAction: {
+      action: "open-primary",
+      title: primaryTitle,
+      url: primaryUrl
+    },
+    secondaryAction: {
+      action: "open-notifications",
+      title: "Alertas",
+      url: "/notifications"
+    },
+    context: {
+      dueToday: Number(summary?.dueToday || 0),
+      overdueCount: Number(summary?.overdueCount || 0),
+      pendingPromises: Number(summary?.pendingPromises || 0)
+    }
   };
 }
 
 function buildPushDeliveryKey(tenantId, userId, deliveryType, localDateKey) {
+  const scopeKey = String(tenantId || "platform").trim() || "platform";
   return crypto
     .createHash("sha256")
-    .update(`${tenantId}|${userId}|${deliveryType}|${localDateKey}`)
+    .update(`${scopeKey}|${userId}|${deliveryType}|${localDateKey}`)
     .digest("hex")
     .slice(0, 40);
 }
 
-async function listPushSubscriptionsForUser(tenantId, userId) {
+let superadminPushTenantScopeCache = {
+  tenantId: null,
+  expiresAt: 0
+};
+
+async function resolveSuperadminPushTenantScope() {
+  if (superadminPushTenantScopeCache.expiresAt > Date.now()) {
+    return superadminPushTenantScopeCache.tenantId;
+  }
+
+  const { data, error } = await supabase
+    .from("users")
+    .select("tenant_id")
+    .eq("role", SUPERADMIN_ROLE)
+    .not("tenant_id", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (error) {
+    superadminPushTenantScopeCache = { tenantId: null, expiresAt: Date.now() + 15 * 1000 };
+    return null;
+  }
+
+  const tenantId = String(data?.[0]?.tenant_id || "").trim() || null;
+  if (tenantId) {
+    superadminPushTenantScopeCache = {
+      tenantId,
+      expiresAt: Date.now() + 5 * 60 * 1000
+    };
+    return tenantId;
+  }
+
+  const tenantsResult = await supabase
+    .from("tenants")
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  const fallbackTenantId = String(tenantsResult?.data?.[0]?.id || "").trim() || null;
+  superadminPushTenantScopeCache = {
+    tenantId: fallbackTenantId,
+    expiresAt: Date.now() + 5 * 60 * 1000
+  };
+  return fallbackTenantId;
+}
+
+async function resolveLatestPushTenantScopeForUser(userId) {
+  const scopedUserId = String(userId || "").trim();
+  if (!scopedUserId) {
+    return null;
+  }
+
   const { data, error } = await supabase
     .from("push_subscriptions")
+    .select("tenant_id,updated_at")
+    .eq("user_id", scopedUserId)
+    .eq("enabled", true)
+    .is("deleted_at", null)
+    .not("tenant_id", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    if (isSchemaMissingError(error)) {
+      return null;
+    }
+
+    console.warn(`[PUSH SCOPE WARNING] Could not resolve latest push scope for user ${scopedUserId}:`, error.message);
+    return null;
+  }
+
+  return String(data?.[0]?.tenant_id || "").trim() || null;
+}
+
+async function resolvePreferredPushTenantScopeForUser(user) {
+  const directTenantId = String(user?.tenantId || "").trim() || null;
+  if (directTenantId) {
+    return directTenantId;
+  }
+
+  if (isSuperadminRole(user?.role)) {
+    const scopedTenantFromSubscriptions = await resolveLatestPushTenantScopeForUser(user?.id);
+    if (scopedTenantFromSubscriptions) {
+      return scopedTenantFromSubscriptions;
+    }
+
+    return resolveSuperadminPushTenantScope();
+  }
+
+  return null;
+}
+
+async function listSuperadminAppUsers() {
+  const { data, error } = await supabase
+    .from("users")
+    .select("id,email,role,tenant_id")
+    .eq("role", SUPERADMIN_ROLE)
+    .eq("status", "active")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []).map((entry) => ({
+    id: entry.id,
+    email: entry.email,
+    role: entry.role,
+    tenantId: entry.tenant_id || null
+  }));
+}
+
+async function listPushSubscriptionsForUser(tenantId, userId) {
+  const scopedTenantId = String(tenantId || "").trim() || null;
+  let query = supabase
+    .from("push_subscriptions")
     .select("id,tenant_id,user_id,endpoint,p256dh,auth,expiration_time,user_agent,device_label,timezone,enabled,last_seen_at,created_at,updated_at")
-    .eq("tenant_id", tenantId)
     .eq("user_id", userId)
     .eq("enabled", true)
+    .is("deleted_at", null)
     .order("updated_at", { ascending: false });
+
+  query = scopedTenantId ? query.eq("tenant_id", scopedTenantId) : query.is("tenant_id", null);
+  const { data, error } = await query;
+
+  if (error) {
+    if (isSchemaMissingError(error)) {
+      return null;
+    }
+    throw error;
+  }
+
+  return (data || []).map((entry) => ({
+    id: entry.id,
+    tenantId: entry.tenant_id,
+    userId: entry.user_id,
+    endpoint: entry.endpoint,
+    expirationTime: entry.expiration_time == null ? null : Number(entry.expiration_time),
+    keys: {
+      p256dh: entry.p256dh,
+      auth: entry.auth
+    },
+    userAgent: entry.user_agent || "",
+    deviceLabel: entry.device_label || "",
+    timezone: sanitizePushTimezone(entry.timezone, "America/Santo_Domingo"),
+    enabled: entry.enabled !== false,
+    lastSeenAt: entry.last_seen_at || null,
+    createdAt: entry.created_at || null,
+    updatedAt: entry.updated_at || null
+  }));
+}
+
+async function listPushSubscriptionsForTenant(tenantId) {
+  const scopedTenantId = String(tenantId || "").trim() || null;
+  let query = supabase
+    .from("push_subscriptions")
+    .select("id,tenant_id,user_id,endpoint,p256dh,auth,expiration_time,user_agent,device_label,timezone,enabled,last_seen_at,created_at,updated_at")
+    .eq("enabled", true)
+    .is("deleted_at", null)
+    .order("updated_at", { ascending: false });
+
+  query = scopedTenantId ? query.eq("tenant_id", scopedTenantId) : query.is("tenant_id", null);
+  const { data, error } = await query;
 
   if (error) {
     if (isSchemaMissingError(error)) {
@@ -1347,6 +2280,9 @@ async function sendPushToSubscription(subscription, payload) {
   }
 
   try {
+    const topic = String(payload?.tag || payload?.type || payload?.localDateKey || "credisync-push")
+      .replace(/[^a-z0-9_-]+/gi, "-")
+      .slice(0, 32) || "credisync-push";
     const response = await webPush.sendNotification(
       {
         endpoint: subscription.endpoint,
@@ -1360,7 +2296,7 @@ async function sendPushToSubscription(subscription, payload) {
       {
         TTL: 60 * 60 * 4,
         urgency: "high",
-        topic: `daily-${payload.localDateKey}`
+        topic
       }
     );
 
@@ -1387,10 +2323,16 @@ async function sendPushToSubscription(subscription, payload) {
 
 async function recordPushDeliveryAttempt(entry) {
   const payload = entry && typeof entry === "object" ? entry : {};
+  const tenantId = String(payload.tenantId || "").trim() || null;
+  const userId = String(payload.userId || "").trim() || null;
+  if (!tenantId || !userId) {
+    return;
+  }
+
   const row = {
     id: payload.id || `PDL-${numericId()}`,
-    tenant_id: payload.tenantId,
-    user_id: payload.userId,
+    tenant_id: tenantId,
+    user_id: userId,
     subscription_id: payload.subscriptionId || null,
     delivery_type: payload.deliveryType || PUSH_DELIVERY_TYPE_DAILY_SUMMARY,
     delivery_date: payload.deliveryDate,
@@ -1408,12 +2350,16 @@ async function recordPushDeliveryAttempt(entry) {
   }
 }
 
-async function hasPushDeliveredDailySummary(tenantId, userId, localDateKey) {
-  const deliveryKey = buildPushDeliveryKey(tenantId, userId, PUSH_DELIVERY_TYPE_DAILY_SUMMARY, localDateKey);
+async function hasPushDeliveredByKey(deliveryKey) {
+  const key = String(deliveryKey || "").trim();
+  if (!key) {
+    return false;
+  }
+
   const { data, error } = await supabase
     .from("push_delivery_logs")
     .select("delivery_key,status")
-    .eq("delivery_key", deliveryKey)
+    .eq("delivery_key", key)
     .eq("status", "sent")
     .maybeSingle();
 
@@ -1425,6 +2371,125 @@ async function hasPushDeliveredDailySummary(tenantId, userId, localDateKey) {
   }
 
   return Boolean(data && data.delivery_key);
+}
+
+async function hasPushDeliveredDailySummary(tenantId, userId, localDateKey) {
+  const deliveryKey = buildPushDeliveryKey(tenantId, userId, PUSH_DELIVERY_TYPE_DAILY_SUMMARY, localDateKey);
+  return hasPushDeliveredByKey(deliveryKey);
+}
+
+async function sendPushPayloadToTenant(tenantId, payload, options = {}) {
+  const scopedTenantId = String(tenantId || "").trim() || null;
+  if (!HAS_WEB_PUSH_CONFIG || !payload) {
+    return { sentUsers: 0, skippedUsers: 0, failedUsers: 0 };
+  }
+
+  const subscriptions = await listPushSubscriptionsForTenant(scopedTenantId);
+  if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
+    return { sentUsers: 0, skippedUsers: 0, failedUsers: 0 };
+  }
+
+  const deliveryType = String(options.deliveryType || PUSH_DELIVERY_TYPE_NOTIFICATION_EVENT).trim() || PUSH_DELIVERY_TYPE_NOTIFICATION_EVENT;
+  const eventKey = String(options.eventKey || options.deliveryDate || isoToday()).trim() || isoToday();
+  const deliveryDate = String(options.deliveryDate || isoToday()).trim() || isoToday();
+  const canPersistDeliveryLog = Boolean(scopedTenantId);
+  const subscriptionsByUser = new Map();
+
+  subscriptions.forEach((entry) => {
+    const userId = String(entry.userId || "").trim();
+    if (!userId) {
+      return;
+    }
+
+    if (!subscriptionsByUser.has(userId)) {
+      subscriptionsByUser.set(userId, []);
+    }
+    subscriptionsByUser.get(userId).push(entry);
+  });
+
+  let sentUsers = 0;
+  let skippedUsers = 0;
+  let failedUsers = 0;
+
+  for (const [userId, userSubscriptions] of subscriptionsByUser.entries()) {
+    const deliveryKey = buildPushDeliveryKey(scopedTenantId, userId, deliveryType, eventKey);
+    if (canPersistDeliveryLog && await hasPushDeliveredByKey(deliveryKey)) {
+      skippedUsers += 1;
+      continue;
+    }
+
+    const results = await Promise.all(userSubscriptions.map((entry) => sendPushToSubscription(entry, payload)));
+    const counters = summarizePushSendResults(results);
+    const status = counters.sent > 0 ? "sent" : "failed";
+
+    if (canPersistDeliveryLog) {
+      await recordPushDeliveryAttempt({
+        tenantId: scopedTenantId,
+        userId,
+        subscriptionId: null,
+        deliveryType,
+        deliveryDate,
+        deliveryKey,
+        status,
+        responseCode: counters.sent > 0 ? 201 : 500,
+        errorMessage: counters.sent > 0 ? "" : "No se pudo entregar a ningun dispositivo activo",
+        payload
+      });
+    }
+
+    if (counters.sent > 0) {
+      sentUsers += 1;
+    } else {
+      failedUsers += 1;
+    }
+  }
+
+  return {
+    sentUsers,
+    skippedUsers,
+    failedUsers
+  };
+}
+
+async function sendPushPayloadToUser(tenantId, userId, payload, options = {}) {
+  const scopedTenantId = String(tenantId || "").trim() || null;
+  const scopedUserId = String(userId || "").trim() || null;
+  if (!HAS_WEB_PUSH_CONFIG || !scopedUserId || !payload) {
+    return { sent: 0, failed: 0 };
+  }
+
+  const subscriptions = await listPushSubscriptionsForUser(scopedTenantId, scopedUserId);
+  if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
+    return { sent: 0, failed: 0 };
+  }
+
+  const results = await Promise.all(subscriptions.map((entry) => sendPushToSubscription(entry, payload)));
+  const counters = summarizePushSendResults(results);
+  const canPersistDeliveryLog = Boolean(scopedTenantId);
+
+  if (canPersistDeliveryLog) {
+    const deliveryType = String(options.deliveryType || PUSH_DELIVERY_TYPE_NOTIFICATION_EVENT).trim() || PUSH_DELIVERY_TYPE_NOTIFICATION_EVENT;
+    const eventKey = String(options.eventKey || options.deliveryDate || isoToday()).trim() || isoToday();
+    const deliveryDate = String(options.deliveryDate || isoToday()).trim() || isoToday();
+    const deliveryKey = buildPushDeliveryKey(scopedTenantId, scopedUserId, deliveryType, eventKey);
+
+    if (!(await hasPushDeliveredByKey(deliveryKey))) {
+      await recordPushDeliveryAttempt({
+        tenantId: scopedTenantId,
+        userId: scopedUserId,
+        subscriptionId: null,
+        deliveryType,
+        deliveryDate,
+        deliveryKey,
+        status: counters.sent > 0 ? "sent" : "failed",
+        responseCode: counters.sent > 0 ? 201 : 500,
+        errorMessage: counters.sent > 0 ? "" : "No se pudo entregar a ningun dispositivo activo",
+        payload
+      });
+    }
+  }
+
+  return counters;
 }
 
 function isInsideDailySummaryWindow(localDateParts) {
@@ -1598,7 +2663,7 @@ function isoNow() {
 }
 
 function isoToday() {
-  return new Date().toISOString().slice(0, 10);
+  return getDatePartsForTimezone("America/Santo_Domingo", new Date()).dateKey;
 }
 
 const PAYMENT_META_MARKER = "__CSMETA__:";
@@ -2359,8 +3424,11 @@ function parseJsonObject(value, fallback) {
 }
 
 function normalizeSubscriptionStatus(value, fallback) {
-  const raw = String(value || fallback || "trial").trim().toLowerCase();
-  return SUBSCRIPTION_STATUSES.has(raw) ? raw : String(fallback || "trial");
+  const raw = String(value || fallback || "active").trim().toLowerCase();
+  if (["suspended", "cancelled", "inactive", "blocked"].includes(raw)) {
+    return "suspended";
+  }
+  return "active";
 }
 
 function normalizeInvoiceStatus(value, fallback) {
@@ -2615,15 +3683,15 @@ function buildCalendarIcsContent(tenantName, events, fallbackDateKey, lookaheadD
   const safeEvents = Array.isArray(events) && events.length > 0
     ? events
     : [
-        {
-          uid: `no-due-${defaultDateKey}@credisync.local`,
-          dateKey: defaultDateKey,
-          summary: "Sin cobros programados",
-          description: `No hay cuotas con vencimiento en los proximos ${rangeDays} dias.`,
-          sequence: 0,
-          lastModified: nowStamp
-        }
-      ];
+      {
+        uid: `no-due-${defaultDateKey}@credisync.local`,
+        dateKey: defaultDateKey,
+        summary: "Sin cobros programados",
+        description: `No hay cuotas con vencimiento en los proximos ${rangeDays} dias.`,
+        sequence: 0,
+        lastModified: nowStamp
+      }
+    ];
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -2717,6 +3785,7 @@ function mapInvoiceRow(row) {
 }
 
 function mapBillingPaymentRow(row) {
+  const meta = parseBillingPaymentStoredNotes(row.notes);
   return {
     id: row.id,
     invoiceId: row.invoice_id,
@@ -2729,7 +3798,10 @@ function mapBillingPaymentRow(row) {
     source: row.source || "tenant",
     receivedAt: row.received_at || null,
     recordedBy: row.recorded_by || null,
-    notes: row.notes || "",
+    notes: meta.publicNote || "",
+    proofImageName: meta.proofImageName || "",
+    proofImageType: meta.proofImageType || "",
+    hasProofImage: Boolean(meta.hasProofImage),
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   };
@@ -2762,6 +3834,113 @@ function mapSubscriptionRow(row, plan, usage) {
     usage: usage || defaults.usage,
     isReadOnly: READ_ONLY_SUBSCRIPTION_STATUSES.has(status)
   };
+}
+
+function buildBillingWindow(startDate) {
+  const safeStart = String(startDate || isoToday()).trim() || isoToday();
+  return {
+    start: safeStart,
+    end: addDaysToDateKey(safeStart, DEFAULT_BILLING_PERIOD_DAYS)
+  };
+}
+
+async function createSuperadminNotification(base) {
+  const payload = notificationPayload({
+    ...base,
+    tenantId: null
+  });
+
+  const persistNotification = async (notification) => {
+    const { error } = await supabase
+      .from("notifications")
+      .upsert(
+        [
+          {
+            ...notification,
+            updated_at: isoNow()
+          }
+        ],
+        { onConflict: "code", ignoreDuplicates: true }
+      );
+
+    return error || null;
+  };
+
+  let persistError = await persistNotification(payload);
+  let persistedPayload = payload;
+
+  if (persistError && String(persistError.code || "") === "23502") {
+    const fallbackTenantId = String(
+      payload.tenantId
+      || payload?.meta?.tenantId
+      || payload.entityId
+      || await resolveSuperadminPushTenantScope()
+      || ""
+    ).trim() || null;
+
+    if (fallbackTenantId) {
+      const scopedPayload = notificationPayload({
+        ...base,
+        tenantId: fallbackTenantId
+      });
+      persistError = await persistNotification(scopedPayload);
+      persistedPayload = scopedPayload;
+    }
+  }
+
+  if (persistError && !["42P01", "42703"].includes(String(persistError.code || ""))) {
+    throw persistError;
+  }
+
+  const pushPayload = buildPushPayloadFromNotification(persistedPayload);
+  if (pushPayload) {
+    const superadminUsers = await listSuperadminAppUsers();
+    const deliveryDate = String(persistedPayload.eventDate || isoToday()).trim() || isoToday();
+
+    for (const user of superadminUsers) {
+      const superadminPushScopeTenantId = await resolvePreferredPushTenantScopeForUser(user);
+      await sendPushPayloadToUser(superadminPushScopeTenantId, user.id, pushPayload, {
+        deliveryType: PUSH_DELIVERY_TYPE_NOTIFICATION_EVENT,
+        eventKey: persistedPayload.code,
+        deliveryDate
+      });
+    }
+  }
+}
+
+async function listSuperadminNotifications(limit = 120) {
+  const max = Math.min(Math.max(parseNumericInput(limit, 120), 1), 200);
+  let query = supabase
+    .from("notifications")
+    .select("id,tenant_id,code,type,severity,title,message,entity_type,entity_id,event_date,status,meta,read_at,created_at,updated_at")
+    .order("created_at", { ascending: false });
+  query = query.or("tenant_id.is.null,type.eq.tenant_signup_alert").limit(max);
+  const { data, error } = await query;
+
+  if (error) {
+    if (String(error.code || "") === "42P01") {
+      return [];
+    }
+    throw error;
+  }
+
+  return (data || []).map((notification) => ({
+    id: notification.id,
+    tenantId: notification.tenant_id || null,
+    code: notification.code,
+    type: notification.type,
+    severity: notification.severity || "info",
+    title: notification.title,
+    message: notification.message,
+    entityType: notification.entity_type || "",
+    entityId: notification.entity_id || "",
+    eventDate: notification.event_date || null,
+    status: notification.status || "unread",
+    meta: notification.meta || {},
+    readAt: notification.read_at || null,
+    createdAt: notification.created_at,
+    updatedAt: notification.updated_at
+  }));
 }
 
 function currentSubscriptionUsage(state) {
@@ -2816,7 +3995,7 @@ function mapPlatformSettingsRow(row) {
     supportEmail: row && row.support_email ? String(row.support_email) : defaults.supportEmail,
     supportPhone: row && row.support_phone ? String(row.support_phone) : defaults.supportPhone,
     allowAdminRegistration: row ? Boolean(row.allow_admin_registration) : defaults.allowAdminRegistration,
-    newTenantStatus: row && String(row.new_tenant_status || "").toLowerCase() === "inactive" ? "inactive" : defaults.newTenantStatus,
+    newTenantStatus: "active",
     tenantDefaults: {
       personalLoanRate: row ? Number(row.default_personal_loan_rate ?? tenantDefaults.personalLoanRate) : tenantDefaults.personalLoanRate,
       businessLoanRate: row ? Number(row.default_business_loan_rate ?? tenantDefaults.businessLoanRate) : tenantDefaults.businessLoanRate,
@@ -2826,7 +4005,8 @@ function mapPlatformSettingsRow(row) {
       graceDays: row ? Number(row.default_grace_days ?? tenantDefaults.graceDays) : tenantDefaults.graceDays,
       autoApprovalScore: row ? Number(row.default_auto_approval_score ?? tenantDefaults.autoApprovalScore) : tenantDefaults.autoApprovalScore,
       maxDebtToIncome: row ? Number(row.default_max_debt_to_income ?? tenantDefaults.maxDebtToIncome) : tenantDefaults.maxDebtToIncome,
-      capitalBudget: row ? Number(row.default_capital_budget ?? tenantDefaults.capitalBudget) : tenantDefaults.capitalBudget
+      capitalBudget: row ? Number(row.default_capital_budget ?? tenantDefaults.capitalBudget) : tenantDefaults.capitalBudget,
+      currency: normalizeCurrency(row?.default_currency, tenantDefaults.currency)
     },
     riskModel: {
       initialScore: row ? Number(row.risk_initial_score ?? riskModel.initialScore) : riskModel.initialScore,
@@ -2923,7 +4103,7 @@ async function ensurePlatformSettings() {
 
   if (existingError) {
     if (existingError.code === 'PGRST204' || existingError.code === 'PGRST205') {
-       return defaults;
+      return defaults;
     }
     throw existingError;
   }
@@ -2995,6 +4175,36 @@ async function getTenantById(tenantId) {
   return data || null;
 }
 
+async function getTenantOwnerUser(tenantId) {
+  if (!tenantId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("users")
+    .select("id,email,name,role,status,last_login_at,created_at")
+    .eq("tenant_id", tenantId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  const users = data || [];
+  return users.find((user) => !isSuperadminRole(user.role || "")) || users[0] || null;
+}
+
+async function deleteRowsByTenant(tableName, tenantId) {
+  const { error } = await supabase
+    .from(tableName)
+    .delete()
+    .eq("tenant_id", tenantId);
+
+  if (error && !["42P01", "42703"].includes(String(error.code || ""))) {
+    throw error;
+  }
+}
+
 async function getAppUserRowById(userId) {
   const { data, error } = await supabase
     .from("users")
@@ -3059,10 +4269,43 @@ async function ensureTenantSettings(tenantId) {
   }
 
   const platformSettings = await ensurePlatformSettings();
-  const defaults = platformSettings.tenantDefaults;
+  const defaults = {
+    ...defaultSettings(),
+    ...((platformSettings && platformSettings.tenantDefaults) || {})
+  };
+  const baseSelection = "tenant_id,personal_loan_rate,business_loan_rate,mortgage_loan_rate,auto_loan_rate,late_penalty_rate,grace_days,auto_approval_score,max_debt_to_income,capital_budget,currency";
+  const { data: existing, error: existingError } = await supabase
+    .from("tenant_settings")
+    .select(`${baseSelection},deleted_at`)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+
+  if (existingError && existingError.code !== "PGRST116") {
+    throw existingError;
+  }
+
+  if (existing) {
+    if (existing.deleted_at) {
+      const { data: restored, error: restoreError } = await supabase
+        .from("tenant_settings")
+        .update({ deleted_at: null })
+        .eq("tenant_id", tenantId)
+        .select(baseSelection)
+        .maybeSingle();
+
+      if (restoreError) {
+        throw restoreError;
+      }
+
+      return restored || existing;
+    }
+
+    return existing;
+  }
+
   const { data, error } = await supabase
     .from("tenant_settings")
-    .upsert(
+    .insert(
       [
         {
           tenant_id: tenantId,
@@ -3074,12 +4317,13 @@ async function ensureTenantSettings(tenantId) {
           grace_days: defaults.graceDays,
           auto_approval_score: defaults.autoApprovalScore,
           max_debt_to_income: defaults.maxDebtToIncome,
-          capital_budget: defaults.capitalBudget
+          capital_budget: defaults.capitalBudget,
+          currency: normalizeCurrency(defaults.currency, DEFAULT_SUBSCRIPTION_CURRENCY),
+          deleted_at: null
         }
-      ],
-      { onConflict: "tenant_id", ignoreDuplicates: true }
+      ]
     )
-    .select("tenant_id,personal_loan_rate,business_loan_rate,mortgage_loan_rate,auto_loan_rate,late_penalty_rate,grace_days,auto_approval_score,max_debt_to_income,capital_budget")
+    .select(baseSelection)
     .maybeSingle();
 
   if (error) {
@@ -3151,10 +4395,13 @@ async function ensureDefaultSubscriptionPlans() {
     return defaults;
   }
 
-  const plans = data.map((row) => {
-    const match = defaults.find((plan) => plan.id === row.id || plan.code === row.code) || defaults[0];
-    return mapPlanRow(row, match);
-  });
+  const defaultPlan = defaults[0];
+  const matchingRow =
+    data.find((row) => String(row?.id || "") === defaultPlan.id)
+    || data.find((row) => String(row?.code || "").toLowerCase() === defaultPlan.code)
+    || null;
+
+  const plans = [matchingRow ? mapPlanRow(matchingRow, defaultPlan) : defaultPlan];
 
   subscriptionPlanCache = {
     plans,
@@ -3222,13 +4469,192 @@ async function loadSubscriptionPlanByCode(planCode) {
   return data ? mapPlanRow(data) : null;
 }
 
+async function findBillingInvoiceForCycle(tenantId, periodStart, periodEnd, dueDate) {
+  const { data, error } = await supabase
+    .from("billing_invoices")
+    .select("id,tenant_id,subscription_id,plan_id,period_start,period_end,amount,currency,status,due_date,issued_at,paid_at,reference,notes,created_at,updated_at")
+    .eq("tenant_id", tenantId)
+    .eq("period_start", periodStart)
+    .eq("period_end", periodEnd)
+    .eq("due_date", dueDate)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    if (isBillingSchemaMissingError(error)) {
+      return null;
+    }
+    throw error;
+  }
+
+  return data ? mapInvoiceRow(data) : null;
+}
+
+async function ensureBillingInvoiceForSubscriptionCycle(tenantId, subscription, plan) {
+  if (!tenantId || !subscription || Number(plan?.priceMonthly || 0) <= 0) {
+    return null;
+  }
+
+  const periodStart = String(subscription.currentPeriodStart || isoToday()).trim() || isoToday();
+  const periodEnd = String(subscription.currentPeriodEnd || buildBillingWindow(periodStart).end).trim()
+    || buildBillingWindow(periodStart).end;
+  const dueDate = String(subscription.nextBillingDate || periodEnd).trim() || periodEnd;
+
+  const existing = await findBillingInvoiceForCycle(tenantId, periodStart, periodEnd, dueDate);
+  if (existing) {
+    return existing;
+  }
+
+  const invoicePayload = {
+    id: `INV-${numericId()}`,
+    tenant_id: tenantId,
+    subscription_id: subscription.id || null,
+    plan_id: subscription.planId || plan?.id || null,
+    period_start: periodStart,
+    period_end: periodEnd,
+    amount: round2(Number(plan?.priceMonthly || 0)),
+    currency: normalizeCurrency(subscription.currency || plan?.currency, DEFAULT_SUBSCRIPTION_CURRENCY),
+    status: dueDate && dueDate <= isoToday() ? "overdue" : "pending",
+    due_date: dueDate,
+    issued_at: isoNow(),
+    reference: "",
+    notes: "Factura generada automaticamente por vencimiento del ciclo mensual."
+  };
+
+  const { data, error } = await supabase
+    .from("billing_invoices")
+    .insert([invoicePayload])
+    .select("id,tenant_id,subscription_id,plan_id,period_start,period_end,amount,currency,status,due_date,issued_at,paid_at,reference,notes,created_at,updated_at")
+    .maybeSingle();
+
+  if (error) {
+    if (isBillingSchemaMissingError(error)) {
+      return null;
+    }
+    throw error;
+  }
+
+  return data ? mapInvoiceRow(data) : null;
+}
+
+async function syncTenantSubscriptionLifecycle(tenantId, row, plan) {
+  if (!tenantId || !row) {
+    return row;
+  }
+
+  const now = isoNow();
+  const today = isoToday();
+  const billingWindow = buildBillingWindow(row.current_period_start || isoToday());
+  const nextStatus = normalizeSubscriptionStatus(row.status, "active");
+  const nextPeriodStart = String(row.current_period_start || billingWindow.start).trim() || billingWindow.start;
+  const nextPeriodEnd = String(row.current_period_end || billingWindow.end).trim() || billingWindow.end;
+  const nextBillingDate = String(row.next_billing_date || nextPeriodEnd).trim() || nextPeriodEnd;
+  const nextCurrency = normalizeCurrency(row.currency || plan?.currency, DEFAULT_SUBSCRIPTION_CURRENCY);
+  const nextUpdate = {};
+
+  if (String(row.status || "").trim().toLowerCase() !== nextStatus) {
+    nextUpdate.status = nextStatus;
+  }
+  if (String(row.current_period_start || "") !== nextPeriodStart) {
+    nextUpdate.current_period_start = nextPeriodStart;
+  }
+  if (String(row.current_period_end || "") !== nextPeriodEnd) {
+    nextUpdate.current_period_end = nextPeriodEnd;
+  }
+  if (String(row.next_billing_date || "") !== nextBillingDate) {
+    nextUpdate.next_billing_date = nextBillingDate;
+  }
+  if (String(row.currency || "") !== nextCurrency) {
+    nextUpdate.currency = nextCurrency;
+  }
+  if (row.trial_ends_at) {
+    nextUpdate.trial_ends_at = null;
+  }
+  if (row.cancelled_at) {
+    nextUpdate.cancelled_at = null;
+  }
+  if (nextStatus === "active" && row.suspended_at) {
+    nextUpdate.suspended_at = null;
+  }
+
+  let effectiveRow = {
+    ...row,
+    ...nextUpdate,
+    status: nextUpdate.status || nextStatus,
+    current_period_start: nextPeriodStart,
+    current_period_end: nextPeriodEnd,
+    next_billing_date: nextBillingDate,
+    currency: nextCurrency
+  };
+
+  const dueReached = nextBillingDate && nextBillingDate <= today;
+  if (dueReached && Number(plan?.priceMonthly || 0) > 0) {
+    const invoice = await ensureBillingInvoiceForSubscriptionCycle(tenantId, mapSubscriptionRow(effectiveRow, plan), plan);
+    if (invoice) {
+      const settlement = await summarizeInvoiceBalance(invoice.id);
+      const settlementResult = await applyInvoiceSettlement(tenantId, settlement, {
+        activateOnPaid: settlement?.expectedStatus === "paid",
+        suspendWhenUnpaid: settlement?.expectedStatus !== "paid"
+      });
+
+      if (settlementResult.subscriptionChanged) {
+        const { data: updatedRow, error: refreshError } = await supabase
+          .from("tenant_subscriptions")
+          .select("id,tenant_id,plan_id,status,billing_cycle,currency,current_period_start,current_period_end,next_billing_date,trial_ends_at,suspended_at,cancelled_at,notes,created_at,updated_at")
+          .eq("tenant_id", tenantId)
+          .maybeSingle();
+
+        if (refreshError) {
+          if (isBillingSchemaMissingError(refreshError)) {
+            return effectiveRow;
+          }
+          throw refreshError;
+        }
+
+        return updatedRow || effectiveRow;
+      }
+    } else if (effectiveRow.status !== "suspended") {
+      nextUpdate.status = "suspended";
+      nextUpdate.suspended_at = row.suspended_at || now;
+    }
+  }
+
+  if (Object.keys(nextUpdate).length === 0) {
+    return effectiveRow;
+  }
+
+  nextUpdate.updated_at = now;
+  const { data: updatedRow, error: updateError } = await supabase
+    .from("tenant_subscriptions")
+    .update(nextUpdate)
+    .eq("tenant_id", tenantId)
+    .select("id,tenant_id,plan_id,status,billing_cycle,currency,current_period_start,current_period_end,next_billing_date,trial_ends_at,suspended_at,cancelled_at,notes,created_at,updated_at")
+    .maybeSingle();
+
+  if (updateError) {
+    if (isBillingSchemaMissingError(updateError)) {
+      return {
+        ...effectiveRow,
+        ...nextUpdate
+      };
+    }
+    throw updateError;
+  }
+
+  return updatedRow || {
+    ...effectiveRow,
+    ...nextUpdate
+  };
+}
+
 async function ensureTenantSubscription(tenantId) {
   if (!tenantId) {
     return defaultSubscriptionSummary();
   }
 
   const plans = await ensureDefaultSubscriptionPlans();
-  const starter = plans.find((plan) => plan.code === "starter") || plans[0] || defaultSubscriptionPlans()[0];
+  const unifiedPlan = plans.find((plan) => plan.code === UNIFIED_SUBSCRIPTION_PLAN_CODE) || plans[0] || defaultSubscriptionPlans()[0];
 
   const { data: current, error } = await supabase
     .from("tenant_subscriptions")
@@ -3246,19 +4672,8 @@ async function ensureTenantSubscription(tenantId) {
         tenantId,
         status: "active",
         isReadOnly: false,
-        features: {
-          ...fallback.features,
-          calendarIcsEnabled: true,
-          advancedReportsEnabled: true,
-          exportsEnabled: true,
-          brandingEnabled: true,
-          prioritySupport: true
-        },
-        limits: {
-          maxUsers: 100000,
-          maxCustomers: 1000000,
-          maxActiveLoans: 1000000
-        }
+        features: defaultPlanFeatures(),
+        limits: defaultPlanLimits()
       };
     }
     throw error;
@@ -3274,15 +4689,15 @@ async function ensureTenantSubscription(tenantId) {
         {
           id: `SUB-${numericId()}`,
           tenant_id: tenantId,
-          plan_id: starter.id,
-          status: "trial",
-          billing_cycle: starter.billingCycle,
-          currency: starter.currency,
+          plan_id: unifiedPlan.id,
+          status: "active",
+          billing_cycle: unifiedPlan.billingCycle,
+          currency: unifiedPlan.currency,
           current_period_start: today,
           current_period_end: addDaysToDateKey(today, DEFAULT_BILLING_PERIOD_DAYS),
           next_billing_date: addDaysToDateKey(today, DEFAULT_BILLING_PERIOD_DAYS),
-          trial_ends_at: addDaysToDateKey(today, DEFAULT_TRIAL_DAYS),
-          notes: "Alta inicial automatica"
+          trial_ends_at: null,
+          notes: "Alta inicial automatica en modo activo"
         }
       ])
       .select(
@@ -3311,18 +4726,145 @@ async function ensureTenantSubscription(tenantId) {
     plan = await loadSubscriptionPlanById(row.plan_id);
   }
   if (!plan) {
-    plan = starter;
+    plan = unifiedPlan;
   }
 
-  if (row && String(row.plan_id || "") !== String(plan.id || "")) {
+  if (row && String(row.plan_id || "") !== String(unifiedPlan.id || "")) {
     await supabase
       .from("tenant_subscriptions")
-      .update({ plan_id: plan.id, updated_at: isoNow() })
+      .update({
+        plan_id: unifiedPlan.id,
+        billing_cycle: unifiedPlan.billingCycle,
+        currency: unifiedPlan.currency,
+        updated_at: isoNow()
+      })
       .eq("tenant_id", tenantId);
-    row.plan_id = plan.id;
+    row.plan_id = unifiedPlan.id;
+    row.billing_cycle = unifiedPlan.billingCycle;
+    row.currency = unifiedPlan.currency;
+    plan = unifiedPlan;
   }
 
+  row = await syncTenantSubscriptionLifecycle(tenantId, row, plan);
   return mapSubscriptionRow(row, plan);
+}
+
+async function syncAllTenantSubscriptionsToUnifiedPlan() {
+  const plans = await ensureDefaultSubscriptionPlans();
+  const unifiedPlan = plans[0] || defaultSubscriptionPlans()[0];
+
+  const { data, error } = await supabase
+    .from("tenant_subscriptions")
+    .select("tenant_id,plan_id,billing_cycle,currency");
+
+  if (error) {
+    if (["42P01", "42703"].includes(String(error.code || ""))) {
+      return [unifiedPlan];
+    }
+    throw error;
+  }
+
+  for (const row of data || []) {
+    if (!row?.tenant_id) {
+      continue;
+    }
+
+    const needsUpdate =
+      String(row.plan_id || "") !== String(unifiedPlan.id || "")
+      || String(row.billing_cycle || "") !== String(unifiedPlan.billingCycle || "")
+      || String(row.currency || "") !== String(unifiedPlan.currency || "");
+
+    if (!needsUpdate) {
+      continue;
+    }
+
+    const { error: updateError } = await supabase
+      .from("tenant_subscriptions")
+      .update({
+        plan_id: unifiedPlan.id,
+        billing_cycle: unifiedPlan.billingCycle,
+        currency: unifiedPlan.currency,
+        updated_at: isoNow()
+      })
+      .eq("tenant_id", row.tenant_id);
+
+    if (updateError && !["42P01", "42703"].includes(String(updateError.code || ""))) {
+      throw updateError;
+    }
+  }
+
+  return [unifiedPlan];
+}
+
+async function syncTenantSubscriptionToUnifiedPlan(tenantId) {
+  const plans = await ensureDefaultSubscriptionPlans();
+  const unifiedPlan = plans[0] || defaultSubscriptionPlans()[0];
+
+  if (!tenantId) {
+    return unifiedPlan;
+  }
+
+  const { error } = await supabase
+    .from("tenant_subscriptions")
+    .update({
+      plan_id: unifiedPlan.id,
+      billing_cycle: unifiedPlan.billingCycle,
+      currency: unifiedPlan.currency,
+      updated_at: isoNow()
+    })
+    .eq("tenant_id", tenantId);
+
+  if (error && !["42P01", "42703"].includes(String(error.code || ""))) {
+    throw error;
+  }
+
+  return unifiedPlan;
+}
+
+async function syncAllTenantSubscriptionLifecycles(options) {
+  const config = options || {};
+  const force = parseBooleanInput(config.force, false);
+  const now = Date.now();
+
+  if (tenantSubscriptionMaintenancePromise) {
+    return tenantSubscriptionMaintenancePromise;
+  }
+
+  if (!force && tenantSubscriptionMaintenanceNextRunAt > now) {
+    return false;
+  }
+
+  const run = (async () => {
+    await syncAllTenantSubscriptionsToUnifiedPlan();
+
+    const { data, error } = await supabase
+      .from("tenants")
+      .select("id");
+
+    if (error) {
+      throw error;
+    }
+
+    for (const row of data || []) {
+      if (!row?.id) {
+        continue;
+      }
+      await ensureTenantSubscription(row.id);
+    }
+
+    tenantSubscriptionMaintenanceNextRunAt = Date.now() + TENANT_SUBSCRIPTION_MAINTENANCE_INTERVAL_MS;
+    return true;
+  })();
+
+  tenantSubscriptionMaintenancePromise = run;
+
+  try {
+    return await run;
+  } finally {
+    if (tenantSubscriptionMaintenancePromise === run) {
+      tenantSubscriptionMaintenancePromise = null;
+    }
+  }
 }
 
 async function listInvoicesForTenant(tenantId, limit) {
@@ -3478,9 +5020,8 @@ async function applyInvoiceSettlement(tenantId, settlement, options) {
 
   let subscriptionChanged = false;
   if (config.activateOnPaid && nextStatus === "paid") {
-    const nextPeriodStart = String(invoiceRow.period_start || isoToday()).trim() || isoToday();
-    const nextPeriodEnd = String(invoiceRow.period_end || addDaysToDateKey(nextPeriodStart, DEFAULT_BILLING_PERIOD_DAYS)).trim()
-      || addDaysToDateKey(nextPeriodStart, DEFAULT_BILLING_PERIOD_DAYS);
+    const nextPeriodStart = String(invoiceRow.period_end || invoiceRow.due_date || isoToday()).trim() || isoToday();
+    const nextPeriodEnd = addDaysToDateKey(nextPeriodStart, DEFAULT_BILLING_PERIOD_DAYS);
 
     const { error: subscriptionError } = await supabase
       .from("tenant_subscriptions")
@@ -3490,10 +5031,12 @@ async function applyInvoiceSettlement(tenantId, settlement, options) {
         current_period_end: nextPeriodEnd,
         next_billing_date: nextPeriodEnd,
         suspended_at: null,
+        cancelled_at: null,
+        trial_ends_at: null,
         updated_at: now
       })
       .eq("tenant_id", tenantId)
-      .in("status", ["trial", "active", "past_due", "suspended"]);
+      .in("status", ["active", "suspended", "trial", "past_due", "cancelled"]);
 
     if (subscriptionError && !isBillingSchemaMissingError(subscriptionError)) {
       throw subscriptionError;
@@ -3504,15 +5047,16 @@ async function applyInvoiceSettlement(tenantId, settlement, options) {
     }
   }
 
-  if (config.markPastDueWhenUnpaid && nextStatus !== "paid") {
+  if (config.suspendWhenUnpaid && nextStatus !== "paid") {
     const { error: subscriptionError } = await supabase
       .from("tenant_subscriptions")
       .update({
-        status: "past_due",
+        status: "suspended",
+        suspended_at: now,
         updated_at: now
       })
       .eq("tenant_id", tenantId)
-      .in("status", ["trial", "active", "past_due"]);
+      .in("status", ["active", "suspended", "trial", "past_due", "cancelled"]);
 
     if (subscriptionError && !isBillingSchemaMissingError(subscriptionError)) {
       throw subscriptionError;
@@ -3540,6 +5084,7 @@ async function ensureUserCalendarIntegration(userId, tenantId) {
     .select("user_id,tenant_id,enabled,timezone,feed_token,updated_at")
     .eq("user_id", userId)
     .eq("tenant_id", tenantId)
+    .is("deleted_at", null)
     .maybeSingle();
 
   if (existing.error) {
@@ -3869,14 +5414,17 @@ async function upsertAppUserFromAuth(authUser, fallbackRole, options) {
 
   let tenantId = config.tenantId !== undefined ? config.tenantId : existing && existing.tenant_id ? existing.tenant_id : null;
   let tenant = null;
+  let tenantWasCreatedNow = false;
 
   if (isSuperadminRole(role)) {
     tenantId = config.keepTenant ? tenantId : null;
   } else {
     tenantId = tenantId || buildTenantId();
+    const tenantBefore = await getTenantById(tenantId);
     tenant = await ensureTenantRecord(tenantId, buildTenantName(name, email), status);
     await ensureTenantSettings(tenantId);
     await ensureTenantSubscription(tenantId);
+    tenantWasCreatedNow = !tenantBefore;
   }
 
   if (existingByEmail && existingByEmail.id !== authUser.id) {
@@ -3929,7 +5477,7 @@ async function upsertAppUserFromAuth(authUser, fallbackRole, options) {
   }
 
   const finalTenant = tenantId ? tenant || (await getTenantById(tenantId)) : null;
-  return mapAppUserRow(data || {
+  const finalUser = mapAppUserRow(data || {
     id: authUser.id,
     email,
     name,
@@ -3939,6 +5487,48 @@ async function upsertAppUserFromAuth(authUser, fallbackRole, options) {
     created_at: null,
     last_login_at: null
   }, finalTenant);
+
+  if (!isSuperadminRole(role) && !existing && tenantWasCreatedNow && finalTenant) {
+    try {
+      await createSuperadminNotification({
+        code: `tenant-signup-${tenantId}`,
+        type: "tenant_signup_alert",
+        severity: "info",
+        title: "Nuevo cliente registrado",
+        message: `${finalTenant.name || tenantId} inicio su suscripcion y ya esta activo en CrediSync.`,
+        entityType: "tenant",
+        entityId: tenantId,
+        eventDate: isoToday(),
+        meta: {
+          tenantId,
+          tenantName: finalTenant.name || tenantId,
+          ownerEmail: email
+        }
+      });
+    } catch (notificationError) {
+      console.warn("[SUPERADMIN NOTIFICATION WARNING]", notificationError?.message || notificationError);
+    }
+
+    try {
+      await recordPlatformAuditLog({
+        actorUserId: finalUser.id,
+        actorRole: finalUser.role,
+        action: "tenant_registered",
+        entityType: "tenant",
+        entityId: tenantId,
+        tenantId,
+        afterData: {
+          tenantName: finalTenant.name || tenantId,
+          ownerEmail: email,
+          subscriptionStatus: "active"
+        }
+      });
+    } catch (auditError) {
+      console.warn("[TENANT REGISTER AUDIT WARNING]", auditError?.message || auditError);
+    }
+  }
+
+  return finalUser;
 }
 
 async function updateAppUserLogin(userId) {
@@ -3959,8 +5549,19 @@ async function tenantQueryOrEmpty(tableName, selectClause, tenantId, options) {
     .select(selectClause)
     .eq("tenant_id", tenantId);
 
+  // Filtrar por deleted_at si es null (no eliminado)
+  if (config.filter?.is === null && config.filter?.column) {
+    query = query.is(config.filter.column, null);
+  } else {
+    query = query.is("deleted_at", null);
+  }
+
   if (config.orderBy) {
     query = query.order(config.orderBy.column, { ascending: Boolean(config.orderBy.ascending) });
+  }
+
+  if (config.excludeType) {
+    query = query.neq("type", String(config.excludeType || "").trim());
   }
 
   if (Number.isFinite(config.limit) && config.limit > 0) {
@@ -3993,65 +5594,71 @@ async function readStateForTenant(tenantId) {
     supabase
       .from("users")
       .select("id,email,name,role,status,tenant_id,created_at,last_login_at")
-      .eq("tenant_id", tenantId),
+      .eq("tenant_id", tenantId)
+      .is("deleted_at", null),
     supabase
       .from("tenant_settings")
       .select("tenant_id,personal_loan_rate,business_loan_rate,mortgage_loan_rate,auto_loan_rate,late_penalty_rate,grace_days,auto_approval_score,max_debt_to_income,capital_budget,currency")
       .eq("tenant_id", tenantId)
+      .is("deleted_at", null)
       .maybeSingle(),
     supabase
       .from("customers")
       .select("id,tenant_id,name,email,phone,status,joined_at,created_at")
-      .eq("tenant_id", tenantId),
+      .eq("tenant_id", tenantId)
+      .is("deleted_at", null),
     supabase
       .from("loans")
       .select("id,tenant_id,customer_id,type,principal,interest_rate,term_months,start_date,paid_amount,status,created_at")
       .eq("tenant_id", tenantId)
+      .is("deleted_at", null)
       .then(async (res) => {
-          if (res.error) return res;
-          // Try to fetch interest_rate_mode separately to fail gracefully if column missing
-          const { data: modes, error: modeError } = await supabase
-            .from("loans")
-            .select("id,interest_rate_mode,payment_model,principal_outstanding")
-            .eq("tenant_id", tenantId);
-          
-          if (!modeError && modes) {
-              const modeMap = Object.fromEntries(modes.map((m) => [m.id, {
-                interestRateMode: m.interest_rate_mode || "annual",
-                paymentModel: normalizePaymentModel(m.payment_model),
-                principalOutstanding: Number.isFinite(Number(m.principal_outstanding)) ? Number(m.principal_outstanding) : null
-              }]));
-              res.data = res.data.map(loan => ({
-                  ...loan,
-                  interest_rate_mode: modeMap[loan.id]?.interestRateMode || 'annual',
-                  payment_model: modeMap[loan.id]?.paymentModel || PAYMENT_MODEL_LEGACY,
-                  principal_outstanding: modeMap[loan.id]?.principalOutstanding
-              }));
-          } else {
-              res.data = res.data.map(loan => ({
-                ...loan,
-                interest_rate_mode: 'annual',
-                payment_model: PAYMENT_MODEL_LEGACY,
-                principal_outstanding: null
-              }));
-          }
-          return res;
+        if (res.error) return res;
+        // Try to fetch interest_rate_mode separately to fail gracefully if column missing
+        const { data: modes, error: modeError } = await supabase
+          .from("loans")
+          .select("id,interest_rate_mode,payment_model,principal_outstanding")
+          .eq("tenant_id", tenantId)
+          .is("deleted_at", null);
+
+        if (!modeError && modes) {
+          const modeMap = Object.fromEntries(modes.map((m) => [m.id, {
+            interestRateMode: m.interest_rate_mode || "annual",
+            paymentModel: normalizePaymentModel(m.payment_model),
+            principalOutstanding: Number.isFinite(Number(m.principal_outstanding)) ? Number(m.principal_outstanding) : null
+          }]));
+          res.data = res.data.map(loan => ({
+            ...loan,
+            interest_rate_mode: modeMap[loan.id]?.interestRateMode || 'annual',
+            payment_model: modeMap[loan.id]?.paymentModel || PAYMENT_MODEL_LEGACY,
+            principal_outstanding: modeMap[loan.id]?.principalOutstanding
+          }));
+        } else {
+          res.data = res.data.map(loan => ({
+            ...loan,
+            interest_rate_mode: 'annual',
+            payment_model: PAYMENT_MODEL_LEGACY,
+            principal_outstanding: null
+          }));
+        }
+        return res;
       }),
     supabase
       .from("payments")
       .select("id,tenant_id,loan_id,customer_id,date,amount,method,note,created_at")
-      .eq("tenant_id", tenantId),
+      .eq("tenant_id", tenantId)
+      .is("deleted_at", null),
     tenantQueryOrEmpty(
       "payment_promises",
       "id,tenant_id,loan_id,customer_id,promised_date,promised_amount,status,note,created_by,resolved_at,created_at,updated_at",
       tenantId,
-      { orderBy: { column: "created_at", ascending: false } }
+      { orderBy: { column: "created_at", ascending: false }, filter: { column: "deleted_at", is: null } }
     ),
     tenantQueryOrEmpty(
       "collection_notes",
       "id,tenant_id,customer_id,loan_id,body,created_by,created_at",
       tenantId,
-      { orderBy: { column: "created_at", ascending: false } }
+      { orderBy: { column: "created_at", ascending: false }, filter: { column: "deleted_at", is: null } }
     )
   ]);
 
@@ -4076,17 +5683,17 @@ async function readStateForTenant(tenantId) {
     })),
     settings: settingsResult.data
       ? {
-          personalLoanRate: Number(settingsResult.data.personal_loan_rate || 0),
-          businessLoanRate: Number(settingsResult.data.business_loan_rate || 0),
-          mortgageLoanRate: Number(settingsResult.data.mortgage_loan_rate || 0),
-          autoLoanRate: Number(settingsResult.data.auto_loan_rate || 0),
-          latePenaltyRate: Number(settingsResult.data.late_penalty_rate || 0),
-          graceDays: Number(settingsResult.data.grace_days || 0),
-          autoApprovalScore: Number(settingsResult.data.auto_approval_score || 0),
-          maxDebtToIncome: Number(settingsResult.data.max_debt_to_income || 0),
-          capitalBudget: Number(settingsResult.data.capital_budget || 0),
-          currency: String(settingsResult.data.currency || 'USD').toUpperCase()
-        }
+        personalLoanRate: Number(settingsResult.data.personal_loan_rate || 0),
+        businessLoanRate: Number(settingsResult.data.business_loan_rate || 0),
+        mortgageLoanRate: Number(settingsResult.data.mortgage_loan_rate || 0),
+        autoLoanRate: Number(settingsResult.data.auto_loan_rate || 0),
+        latePenaltyRate: Number(settingsResult.data.late_penalty_rate || 0),
+        graceDays: Number(settingsResult.data.grace_days || 0),
+        autoApprovalScore: Number(settingsResult.data.auto_approval_score || 0),
+        maxDebtToIncome: Number(settingsResult.data.max_debt_to_income || 0),
+        capitalBudget: Number(settingsResult.data.capital_budget || 0),
+        currency: normalizeCurrency(settingsResult.data.currency, DEFAULT_SUBSCRIPTION_CURRENCY)
+      }
       : defaultSettings(),
     riskModel: platformSettings && platformSettings.riskModel ? platformSettings.riskModel : defaultRiskModel(),
     subscription,
@@ -4155,7 +5762,11 @@ async function readStateForTenant(tenantId) {
     "notifications",
     "id,tenant_id,code,type,severity,title,message,entity_type,entity_id,event_date,status,meta,read_at,created_at,updated_at",
     tenantId,
-    { orderBy: { column: "created_at", ascending: false }, limit: 120 }
+    {
+      orderBy: { column: "created_at", ascending: false },
+      limit: 120,
+      excludeType: "tenant_signup_alert"
+    }
   );
 
   if (notificationsResult.error) {
@@ -4184,7 +5795,17 @@ async function readStateForTenant(tenantId) {
 }
 
 async function readStateForUser(user) {
-  if (!user || !user.tenantId) {
+  if (!user) {
+    return createEmptyState();
+  }
+
+  if (isSuperadminRole(user.role)) {
+    const base = createEmptyState();
+    base.notifications = await listSuperadminNotifications(120);
+    return base;
+  }
+
+  if (!user.tenantId) {
     return createEmptyState();
   }
 
@@ -4285,6 +5906,12 @@ async function requireAuth(req, res, next) {
     if (!user) {
       return res.status(401).json({ message: "Sesion no valida" });
     }
+
+    syncAllTenantSubscriptionLifecycles().catch((error) => {
+      if (!IS_PROD) {
+        console.error("[SUBSCRIPTION MAINTENANCE ERROR]", error);
+      }
+    });
 
     if (normalizeAccountStatus(user.status) !== "active") {
       return res.status(403).json({ message: "Tu cuenta esta desactivada. Contacta al superadministrador." });
@@ -4559,15 +6186,15 @@ app.get("/api/auth/google", (req, res) => {
   // For staging: redirect to Google OAuth
   // In production, you would implement full OAuth flow
   const googleOAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${process.env.GOOGLE_CLIENT_ID || ''}&redirect_uri=${encodeURIComponent(APP_PUBLIC_URL + '/api/auth/google/callback')}&response_type=code&scope=openid%20email%20profile`;
-  
+
   if (!process.env.GOOGLE_CLIENT_ID) {
     // Si no hay Google Client ID, mostrar mensaje informativo
-    return res.json({ 
+    return res.json({
       message: 'Google OAuth no configurado. Para usar esta funcionalidad, configura GOOGLE_CLIENT_ID en las variables de entorno.',
       info: 'Por ahora, usa Sign In con email y password.'
     });
   }
-  
+
   res.redirect(googleOAuthUrl);
 });
 
@@ -4575,11 +6202,11 @@ app.get("/api/auth/google", (req, res) => {
 app.get("/api/auth/google/callback", async (req, res, next) => {
   try {
     const { code } = req.query;
-    
+
     if (!code || !process.env.GOOGLE_CLIENT_ID) {
       return res.status(400).json({ message: 'Codigo de Google no valido o configuracion incompleta' });
     }
-    
+
     // Exchange code for token
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -4592,27 +6219,27 @@ app.get("/api/auth/google/callback", async (req, res, next) => {
         grant_type: 'authorization_code'
       })
     });
-    
+
     const tokenData = await tokenResponse.json();
-    
+
     if (!tokenData.access_token) {
       return res.status(400).json({ message: 'No se pudo obtener token de Google' });
     }
-    
+
     // Get user info from Google
     const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` }
     });
-    
+
     const googleUser = await userInfoResponse.json();
-    
+
     if (!googleUser.email) {
       return res.status(400).json({ message: 'No se pudo obtener email de Google' });
     }
-    
+
     // Find or create user in Supabase
     let authUser = await findAuthUserByEmail(googleUser.email);
-    
+
     if (!authUser) {
       // Create new user
       const randomPassword = crypto.randomBytes(32).toString('hex');
@@ -4626,14 +6253,14 @@ app.get("/api/auth/google/callback", async (req, res, next) => {
           provider: 'google'
         }
       });
-      
+
       if (error) throw error;
       authUser = data?.user || null;
     }
-    
+
     // Get or create app user
     let appUser = await getAppUserById(authUser.id);
-    
+
     if (!appUser) {
       const { data, error } = await supabase
         .from('users')
@@ -4647,24 +6274,24 @@ app.get("/api/auth/google/callback", async (req, res, next) => {
         }])
         .select()
         .single();
-      
+
       if (error) throw error;
       appUser = data;
     }
-    
+
     // Update last login
     await supabase
       .from('users')
       .update({ last_login_at: new Date().toISOString() })
       .eq('id', appUser.id);
-    
+
     // Generate JWT
     const token = jwt.sign(
       { sub: appUser.id, email: appUser.email, role: appUser.role },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
-    
+
     res.cookie(JWT_COOKIE_NAME, token, cookieOptions());
     res.redirect('/dashboard');
   } catch (error) {
@@ -4677,11 +6304,11 @@ app.get("/api/auth/google/callback", async (req, res, next) => {
 app.post("/api/auth/biometric/register", requireAuth, async (req, res, next) => {
   try {
     const { publicKey } = req.body;
-    
+
     // Generate credential creation options
     const challenge = crypto.randomBytes(32);
     const userId = req.user.id;
-    
+
     const options = {
       challenge: challenge.toString('base64'),
       user: {
@@ -4700,11 +6327,11 @@ app.post("/api/auth/biometric/register", requireAuth, async (req, res, next) => 
         userVerification: 'required'
       }
     };
-    
+
     // Store challenge temporarily (in production, use Redis or similar)
     req.session = req.session || {};
     req.session.challenge = challenge.toString('base64');
-    
+
     res.json({ options });
   } catch (error) {
     next(error);
@@ -4715,43 +6342,43 @@ app.post("/api/auth/biometric/register", requireAuth, async (req, res, next) => 
 app.post("/api/auth/biometric", async (req, res, next) => {
   try {
     const { id, rawId, response } = req.body;
-    
+
     // Verify the biometric assertion
     // In production, you would verify the signature against stored public key
-    
+
     // For now, we'll look up user by credential ID stored in localStorage
     // This is a simplified implementation
-    
+
     // Get user from credential (stored in userHandle)
     const userHandle = response.userHandle;
-    
+
     if (!userHandle) {
       return res.status(400).json({ message: 'Credencial biometrica invalida' });
     }
-    
+
     // Decode userHandle to get user ID
     const userId = atob(userHandle);
-    
+
     // Get user from database
     const appUser = await getAppUserById(userId);
-    
+
     if (!appUser || normalizeAccountStatus(appUser.status) !== 'active') {
       return res.status(401).json({ message: 'Usuario no encontrado o inactivo' });
     }
-    
+
     // Update last login
     await supabase
       .from('users')
       .update({ last_login_at: new Date().toISOString() })
       .eq('id', appUser.id);
-    
+
     // Generate JWT
     const token = jwt.sign(
       { sub: appUser.id, email: appUser.email, role: appUser.role },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
-    
+
     res.cookie(JWT_COOKIE_NAME, token, cookieOptions());
     res.json({ user: sanitizeUser(appUser) });
   } catch (error) {
@@ -4809,45 +6436,16 @@ app.post("/api/auth/request-password-reset", async (req, res, next) => {
       return res.status(500).json({ message: 'Error generando código de verificación' });
     }
 
-    // Send email via Supabase Edge Function
-    const edgeFunctionUrl = `https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/send-password-reset-email`;
-
-    // Get app URL for reset link
+    // Send reset email using native Supabase Auth flow (no Edge Function dependency)
     const appUrl = APP_PUBLIC_URL || 'https://credisync-727b6-staging.web.app';
-    const resetUrl = `${appUrl}/reset-password-code?email=${encodeURIComponent(email)}&code=${code}`;
+    const redirectTo = `${appUrl}/reset-password`;
 
-    let emailSent = false;
+    const { error: resetEmailError } = await supabasePublic.auth.resetPasswordForEmail(email, {
+      redirectTo
+    });
 
-    try {
-      const emailResponse = await fetch(edgeFunctionUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          'Prefer': 'throw-if-no-key'
-        },
-        body: JSON.stringify({
-          email,
-          code,
-          resetUrl
-        })
-      });
-
-      const emailResult = await emailResponse.json();
-
-      if (!emailResponse.ok) {
-        console.error('Error sending email via Edge Function:', emailResult);
-        console.log(`Password reset code for ${email}: ${code} (email failed to send)`);
-      } else {
-        emailSent = true;
-        console.log(`Password reset email sent to ${email} via SendGrid.`);
-      }
-    } catch (emailError) {
-      console.error('Failed to call Edge Function:', emailError.message);
-      console.log(`Password reset code for ${email}: ${code} (email failed to send)`);
-    }
-
-    if (!emailSent) {
+    if (resetEmailError) {
+      console.error('Error sending reset email via Supabase Auth:', resetEmailError);
       await supabase
         .from('password_reset_codes')
         .update({ used: true })
@@ -4855,12 +6453,14 @@ app.post("/api/auth/request-password-reset", async (req, res, next) => {
         .eq('code', code);
 
       return res.status(503).json({
-        message: 'No se pudo enviar el correo de recuperacion. Verifica la configuracion de email o contacta soporte.'
+        message: 'No se pudo enviar el correo de recuperacion. Verifica la configuracion de Supabase Auth o contacta soporte.'
       });
     }
 
+    console.log(`Password reset email requested for ${email} via Supabase Auth.`);
+
     res.status(200).json({
-      message: 'Código generado. Revisa tu correo electrónico.',
+      message: 'Codigo generado. Revisa tu correo electronico.',
       // Don't send code in production response
       code: IS_PROD ? undefined : code
     });
@@ -5069,7 +6669,7 @@ app.put("/api/superadmin/settings", requireAuth, requireSuperadmin, async (req, 
       supportEmail: String(req.body.supportEmail || defaults.supportEmail).trim().toLowerCase(),
       supportPhone: String(req.body.supportPhone || defaults.supportPhone).trim(),
       allowAdminRegistration: parseBooleanInput(req.body.allowAdminRegistration, defaults.allowAdminRegistration),
-      newTenantStatus: String(req.body.newTenantStatus || defaults.newTenantStatus).trim().toLowerCase() === "inactive" ? "inactive" : "active",
+      newTenantStatus: "active",
       tenantDefaults: {
         personalLoanRate: parseNumericInput(req.body.tenantDefaults?.personalLoanRate, defaults.tenantDefaults.personalLoanRate),
         businessLoanRate: parseNumericInput(req.body.tenantDefaults?.businessLoanRate, defaults.tenantDefaults.businessLoanRate),
@@ -5257,6 +6857,101 @@ app.get("/api/superadmin/tenants/:tenantId/audit", requireAuth, requireSuperadmi
   }
 });
 
+app.delete("/api/superadmin/tenants/:tenantId", requireAuth, requireSuperadmin, async (req, res, next) => {
+  try {
+    const tenantId = String(req.params.tenantId || "").trim();
+    if (!tenantId) {
+      return res.status(400).json({ message: "Tenant invalido" });
+    }
+
+    const tenant = await getTenantById(tenantId);
+    if (!tenant) {
+      return res.status(404).json({ message: "Tenant no encontrado" });
+    }
+
+    const usersResult = await supabase
+      .from("users")
+      .select("id,email,name,role,tenant_id")
+      .eq("tenant_id", tenantId);
+
+    if (usersResult.error) {
+      throw usersResult.error;
+    }
+
+    const tenantUsers = usersResult.data || [];
+    const protectedTenant = tenantUsers.some((user) => isSuperadminRole(user.role || ""));
+
+    if (protectedTenant || String(req.user.tenantId || "") === tenantId) {
+      return res.status(400).json({ message: "El tenant del superadministrador esta protegido y no puede eliminarse" });
+    }
+
+    const beforeData = {
+      tenant,
+      usersCount: tenantUsers.length
+    };
+
+    await deleteRowsByTenant("billing_payments", tenantId);
+    await deleteRowsByTenant("billing_invoices", tenantId);
+    await deleteRowsByTenant("tenant_subscriptions", tenantId);
+    await deleteRowsByTenant("notifications", tenantId);
+    await deleteRowsByTenant("payment_promises", tenantId);
+    await deleteRowsByTenant("payments", tenantId);
+    await deleteRowsByTenant("user_calendar_integrations", tenantId);
+    await deleteRowsByTenant("push_subscriptions", tenantId);
+
+    if (tenantUsers.length > 0) {
+      const { error: deleteUsersError } = await supabase
+        .from("users")
+        .delete()
+        .eq("tenant_id", tenantId);
+
+      if (deleteUsersError) {
+        throw deleteUsersError;
+      }
+
+      if (HAS_SUPABASE_SERVICE_ROLE_KEY) {
+        for (const user of tenantUsers) {
+          const { error: authError } = await supabase.auth.admin.deleteUser(user.id);
+          if (authError) {
+            console.warn(`[AUTH DELETE WARNING] Could not delete tenant user ${user.id}:`, authError.message);
+          }
+        }
+      }
+    }
+
+    const { error: deleteTenantError } = await supabase
+      .from("tenants")
+      .delete()
+      .eq("id", tenantId);
+
+    if (deleteTenantError) {
+      throw deleteTenantError;
+    }
+
+    await recordPlatformAuditLog({
+      actorUserId: req.user.id,
+      actorRole: req.user.role,
+      action: "tenant_deleted",
+      entityType: "tenant",
+      entityId: tenantId,
+      tenantId: null,
+      beforeData,
+      afterData: {},
+      meta: {
+        deletedUsers: tenantUsers.map((user) => ({
+          id: user.id,
+          email: user.email,
+          role: user.role
+        }))
+      }
+    });
+
+    return res.json({ ok: true, tenantId });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.patch("/api/superadmin/users/:id/status", requireAuth, requireSuperadmin, async (req, res, next) => {
   try {
     const userId = req.params.id;
@@ -5326,7 +7021,7 @@ app.patch("/api/superadmin/users/:id/role", requireAuth, requireSuperadmin, asyn
     if (!isSuperadminRole(role) && !tenantId) {
       const platformSettings = await ensurePlatformSettings();
       tenantId = buildTenantId();
-      await ensureTenantRecord(tenantId, buildTenantName(targetRow.name, targetRow.email), platformSettings.newTenantStatus);
+      await ensureTenantRecord(tenantId, buildTenantName(targetRow.name, targetRow.email), "active");
       await ensureTenantSettings(tenantId);
     }
 
@@ -5390,27 +7085,53 @@ app.delete("/api/superadmin/users/:id", requireAuth, requireSuperadmin, async (r
       return res.status(404).json({ message: "Usuario no encontrado" });
     }
 
-    // 1. Delete from App DB users table
+    // 1. Soft delete user (marca como eliminado, no borra permanentemente)
     const { error: dbError } = await supabase
       .from("users")
-      .delete()
-      .eq("id", userId);
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", userId)
+      .is("deleted_at", null); // Solo si no está ya eliminado
 
     if (dbError) {
-      console.error("[DB DELETE USER ERROR]", dbError);
-      return res.status(400).json({ message: "No se puede eliminar el usuario porque tiene información asociada (logs o transacciones). Remove primero esos registros para continuar." });
+      console.error("[DB SOFT DELETE USER ERROR]", dbError);
+      return res.status(400).json({ message: "No se puede eliminar el usuario. Intente nuevamente." });
     }
 
-    // 2. Delete from Supabase Auth if possible
+    // 2. Marcar datos relacionados como eliminados (best-effort: no bloquear respuesta si falla)
+    try {
+      const { error: calendarDeleteError } = await supabase
+        .from("user_calendar_integrations")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("user_id", userId);
+      if (calendarDeleteError) {
+        console.warn(`[USER DELETE WARNING] user_calendar_integrations cleanup failed for ${userId}:`, calendarDeleteError.message);
+      }
+    } catch (calendarCleanupError) {
+      console.warn(`[USER DELETE WARNING] user_calendar_integrations cleanup exception for ${userId}:`, calendarCleanupError?.message || calendarCleanupError);
+    }
+
+    try {
+      const { error: pushDeleteError } = await supabase
+        .from("push_subscriptions")
+        .update({ deleted_at: new Date().toISOString() })
+        .eq("user_id", userId);
+      if (pushDeleteError) {
+        console.warn(`[USER DELETE WARNING] push_subscriptions cleanup failed for ${userId}:`, pushDeleteError.message);
+      }
+    } catch (pushCleanupError) {
+      console.warn(`[USER DELETE WARNING] push_subscriptions cleanup exception for ${userId}:`, pushCleanupError?.message || pushCleanupError);
+    }
+
+    // 3. Eliminar de Supabase Auth (opcional, esto sí es permanente)
+    // Nota: Si necesitas restaurar el usuario, deberás crearlo nuevamente en Auth
     if (HAS_SUPABASE_SERVICE_ROLE_KEY) {
       const { error: authError } = await supabase.auth.admin.deleteUser(userId);
       if (authError) {
-        // We log but don't necessarily fail if the user was already deleted from Auth
         console.warn(`[AUTH DELETE WARNING] Could not delete user ${userId} from Auth:`, authError.message);
       }
     }
 
-    return res.json({ ok: true, message: "Usuario eliminado correctamente" });
+    return res.json({ ok: true, message: "Usuario eliminado correctamente. Los datos permanecen en la base de datos para recuperación." });
   } catch (error) {
     return next(error);
   }
@@ -5487,6 +7208,7 @@ app.delete("/api/customers/:id", requireAuth, requireTenantUser, requireTenantWr
       .select("id,name")
       .eq("id", customerId)
       .eq("tenant_id", req.user.tenantId)
+      .is("deleted_at", null)
       .maybeSingle();
 
     if (customerError) {
@@ -5497,11 +7219,13 @@ app.delete("/api/customers/:id", requireAuth, requireTenantUser, requireTenantWr
       return res.status(404).json({ message: "Cliente no encontrado" });
     }
 
+    // Soft delete: marcar como eliminado en lugar de borrar permanentemente
     const { error: deleteError } = await supabase
       .from("customers")
-      .delete()
+      .update({ deleted_at: new Date().toISOString() })
       .eq("id", customerId)
-      .eq("tenant_id", req.user.tenantId);
+      .eq("tenant_id", req.user.tenantId)
+      .is("deleted_at", null);
 
     if (deleteError) {
       throw deleteError;
@@ -5673,11 +7397,255 @@ app.post("/api/loans", requireAuth, requireTenantUser, requireTenantWriteAccess,
       const { error: retryError } = await supabase
         .from("loans")
         .insert([fallbackPayload]);
-      
+
       if (retryError) throw retryError;
     }
 
     return res.status(201).json({ loan });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.put("/api/loans/:id", requireAuth, requireTenantUser, requireTenantWriteAccess, async (req, res, next) => {
+  try {
+    const loanId = String(req.params.id || "").trim();
+    if (!loanId) {
+      return res.status(400).json({ message: "Prestamo invalido" });
+    }
+
+    const { data: loanRow, error: loanError } = await supabase
+      .from("loans")
+      .select("id,tenant_id,customer_id,type,principal,interest_rate,term_months,start_date,paid_amount,status")
+      .eq("id", loanId)
+      .eq("tenant_id", req.user.tenantId)
+      .maybeSingle();
+
+    if (loanError) {
+      throw loanError;
+    }
+
+    if (!loanRow) {
+      return res.status(404).json({ message: "Prestamo no encontrado" });
+    }
+
+    const { data: modeData } = await supabase
+      .from("loans")
+      .select("interest_rate_mode,payment_model,principal_outstanding")
+      .eq("id", loanId)
+      .eq("tenant_id", req.user.tenantId)
+      .maybeSingle();
+
+    const existingLoan = {
+      id: loanRow.id,
+      tenantId: loanRow.tenant_id,
+      customerId: loanRow.customer_id,
+      type: loanRow.type,
+      principal: Number(loanRow.principal || 0),
+      interestRate: Number(loanRow.interest_rate || 0),
+      interestRateMode: modeData && modeData.interest_rate_mode === "monthly" ? "monthly" : "annual",
+      paymentModel: normalizePaymentModel(modeData && modeData.payment_model),
+      termMonths: Number(loanRow.term_months || 0),
+      startDate: loanRow.start_date,
+      paidAmount: Number(loanRow.paid_amount || 0),
+      principalOutstanding: Number.isFinite(Number(modeData && modeData.principal_outstanding))
+        ? Number(modeData.principal_outstanding)
+        : null,
+      status: loanRow.status || "active"
+    };
+
+    const hasCustomerId = Object.prototype.hasOwnProperty.call(req.body || {}, "customerId");
+    const hasType = Object.prototype.hasOwnProperty.call(req.body || {}, "type");
+    const hasPrincipal = Object.prototype.hasOwnProperty.call(req.body || {}, "principal");
+    const hasInterestRate = Object.prototype.hasOwnProperty.call(req.body || {}, "interestRate");
+    const hasInterestRateMode = Object.prototype.hasOwnProperty.call(req.body || {}, "interestRateMode");
+    const hasPaymentModel = Object.prototype.hasOwnProperty.call(req.body || {}, "paymentModel");
+    const hasTermMonths = Object.prototype.hasOwnProperty.call(req.body || {}, "termMonths");
+    const hasStartDate = Object.prototype.hasOwnProperty.call(req.body || {}, "startDate");
+
+    const nextLoan = {
+      ...existingLoan,
+      customerId: hasCustomerId ? String(req.body.customerId || "").trim() : existingLoan.customerId,
+      type: hasType ? String(req.body.type || "").trim() : existingLoan.type,
+      principal: hasPrincipal ? parseNumericInput(req.body.principal, NaN) : existingLoan.principal,
+      interestRate: hasInterestRate ? parseNumericInput(req.body.interestRate, NaN) : existingLoan.interestRate,
+      interestRateMode: hasInterestRateMode
+        ? (String(req.body.interestRateMode || "").trim().toLowerCase() === "monthly" ? "monthly" : "annual")
+        : existingLoan.interestRateMode,
+      paymentModel: hasPaymentModel ? normalizePaymentModel(req.body.paymentModel) : existingLoan.paymentModel,
+      termMonths: hasTermMonths ? parseNumericInput(req.body.termMonths, NaN) : existingLoan.termMonths,
+      startDate: hasStartDate ? String(req.body.startDate || "").trim() : existingLoan.startDate
+    };
+
+    if (!nextLoan.customerId || !nextLoan.type || !nextLoan.startDate || nextLoan.principal <= 0 || nextLoan.termMonths <= 0) {
+      return res.status(400).json({ message: "Completa todos los campos del prestamo" });
+    }
+
+    if (!Number.isFinite(nextLoan.interestRate) || nextLoan.interestRate < 0) {
+      return res.status(400).json({ message: "La tasa de interes no es valida" });
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextLoan.startDate)) {
+      return res.status(400).json({ message: "Fecha de inicio invalida" });
+    }
+
+    if (nextLoan.principal + 0.01 < existingLoan.paidAmount) {
+      return res.status(400).json({
+        message: `El monto principal no puede ser menor al capital ya recuperado (${existingLoan.paidAmount.toFixed(2)}).`
+      });
+    }
+
+    const { data: loanPayments, error: loanPaymentsError } = await supabase
+      .from("payments")
+      .select("id")
+      .eq("loan_id", loanId)
+      .eq("tenant_id", req.user.tenantId)
+      .limit(1);
+
+    if (loanPaymentsError) {
+      throw loanPaymentsError;
+    }
+
+    const hasPayments = Array.isArray(loanPayments) && loanPayments.length > 0;
+    if (nextLoan.paymentModel !== existingLoan.paymentModel && hasPayments) {
+      return res.status(400).json({
+        message: "No puedes cambiar el modelo de cobro de un prestamo que ya tiene pagos registrados."
+      });
+    }
+
+    const { data: customer, error: customerError } = await supabase
+      .from("customers")
+      .select("id")
+      .eq("id", nextLoan.customerId)
+      .eq("tenant_id", req.user.tenantId)
+      .maybeSingle();
+
+    if (customerError) {
+      throw customerError;
+    }
+
+    if (!customer) {
+      return res.status(400).json({ message: "Selecciona un cliente valido de tu espacio de trabajo" });
+    }
+
+    if (isInterestOnlyBalloonLoan(nextLoan)) {
+      nextLoan.principalOutstanding = Math.max(round2(nextLoan.principal - existingLoan.paidAmount), 0);
+    } else {
+      nextLoan.principalOutstanding = Number.isFinite(Number(existingLoan.principalOutstanding))
+        ? Math.max(round2(existingLoan.principalOutstanding), 0)
+        : null;
+      const nextTotalPayable = loanTotalPayable(nextLoan);
+      if (existingLoan.paidAmount > nextTotalPayable + 0.01) {
+        return res.status(400).json({
+          message: `La configuracion propuesta deja pagos aplicados por encima del total del prestamo (${nextTotalPayable.toFixed(2)}).`
+        });
+      }
+    }
+
+    const tenantState = await readStateForTenant(req.user.tenantId);
+    const projectedLoans = (tenantState.loans || []).map((loan) => (
+      String(loan.id) === loanId
+        ? {
+          ...loan,
+          customerId: nextLoan.customerId,
+          type: nextLoan.type,
+          principal: nextLoan.principal,
+          interestRate: nextLoan.interestRate,
+          interestRateMode: nextLoan.interestRateMode,
+          paymentModel: nextLoan.paymentModel,
+          termMonths: nextLoan.termMonths,
+          startDate: nextLoan.startDate,
+          principalOutstanding: nextLoan.principalOutstanding
+        }
+        : loan
+    ));
+
+    const budget = Math.max(Number(tenantState.settings?.capitalBudget) || 0, 0);
+    if (budget > 0) {
+      const projectedCommitted = capitalCommittedFromLoans(projectedLoans);
+      if (projectedCommitted > budget + 0.01) {
+        return res.status(400).json({
+          message: `Capital insuficiente con esta actualizacion. Disponible: $${Math.max(round2(budget - projectedCommitted), 0).toFixed(2)}`
+        });
+      }
+    }
+
+    const basePayload = {
+      customer_id: nextLoan.customerId,
+      type: nextLoan.type,
+      principal: nextLoan.principal,
+      interest_rate: nextLoan.interestRate,
+      term_months: nextLoan.termMonths,
+      start_date: nextLoan.startDate
+    };
+
+    const payloadWithOptional = {
+      ...basePayload,
+      interest_rate_mode: nextLoan.interestRateMode,
+      payment_model: nextLoan.paymentModel,
+      principal_outstanding: nextLoan.principalOutstanding
+    };
+
+    const { error: updateError } = await supabase
+      .from("loans")
+      .update(payloadWithOptional)
+      .eq("id", loanId)
+      .eq("tenant_id", req.user.tenantId);
+
+    if (updateError) {
+      const { error: retryError } = await supabase
+        .from("loans")
+        .update(basePayload)
+        .eq("id", loanId)
+        .eq("tenant_id", req.user.tenantId);
+
+      if (retryError) {
+        throw retryError;
+      }
+    }
+
+    if (nextLoan.customerId !== existingLoan.customerId) {
+      const { error: paymentsCustomerError } = await supabase
+        .from("payments")
+        .update({ customer_id: nextLoan.customerId })
+        .eq("loan_id", loanId)
+        .eq("tenant_id", req.user.tenantId);
+
+      if (paymentsCustomerError) {
+        throw paymentsCustomerError;
+      }
+
+      const { error: promisesCustomerError } = await supabase
+        .from("payment_promises")
+        .update({ customer_id: nextLoan.customerId })
+        .eq("loan_id", loanId)
+        .eq("tenant_id", req.user.tenantId);
+
+      if (promisesCustomerError) {
+        throw promisesCustomerError;
+      }
+
+      const { error: notesCustomerError } = await supabase
+        .from("collection_notes")
+        .update({ customer_id: nextLoan.customerId })
+        .eq("loan_id", loanId)
+        .eq("tenant_id", req.user.tenantId);
+
+      if (notesCustomerError) {
+        throw notesCustomerError;
+      }
+    }
+
+    const nextState = await readStateForUser(req.user);
+    const updatedLoan = (nextState.loans || []).find((item) => String(item.id) === loanId);
+
+    return res.json({
+      loan: updatedLoan || {
+        ...nextLoan,
+        paidAmount: existingLoan.paidAmount,
+        status: existingLoan.status
+      }
+    });
   } catch (error) {
     return next(error);
   }
@@ -5757,6 +7725,14 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
       principalOutstanding: Number.isFinite(Number(modeResult?.principal_outstanding)) ? Number(modeResult.principal_outstanding) : null,
       status: loanRow.status || "active"
     };
+
+    const { data: customerRow } = await supabase
+      .from("customers")
+      .select("name")
+      .eq("id", loan.customerId)
+      .eq("tenant_id", req.user.tenantId)
+      .maybeSingle();
+    const customerName = String(customerRow?.name || "").trim() || "Cliente";
 
     const { data: tenantSettingsRow, error: tenantSettingsError } = await supabase
       .from("tenant_settings")
@@ -5913,6 +7889,16 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
         throw syncResult.error;
       }
 
+      await sendPushPayloadToTenant(req.user.tenantId, buildPaymentReceivedPushPayload(payment, {
+        customerName,
+        loanId: loan.id,
+        customerId: loan.customerId
+      }), {
+        deliveryType: PUSH_DELIVERY_TYPE_PAYMENT_RECEIVED,
+        eventKey: payment.id,
+        deliveryDate: date
+      });
+
       return res.status(201).json({
         payment,
         allocation: {
@@ -6059,6 +8045,16 @@ app.post("/api/payments", requireAuth, requireTenantUser, requireTenantWriteAcce
       }
     }
 
+    await sendPushPayloadToTenant(req.user.tenantId, buildPaymentReceivedPushPayload(payment, {
+      customerName,
+      loanId: loan.id,
+      customerId: loan.customerId
+    }), {
+      deliveryType: PUSH_DELIVERY_TYPE_PAYMENT_RECEIVED,
+      eventKey: payment.id,
+      deliveryDate: date
+    });
+
     return res.status(201).json({
       payment,
       allocation: {
@@ -6111,9 +8107,9 @@ app.post("/api/payments/:id/send-receipt", requireAuth, requireTenantUser, requi
       return res.status(400).json({ message: "Pago invalido" });
     }
 
-    if (!HAS_SENDGRID_CONFIG) {
+    if (!HAS_RESEND_CONFIG) {
       return res.status(503).json({
-        message: "El envio de comprobantes no esta configurado. Falta SENDGRID_API_KEY o SENDGRID_FROM_EMAIL."
+        message: "El envio de comprobantes no esta configurado. Falta RESEND_API_KEY o RESEND_FROM_EMAIL."
       });
     }
 
@@ -6132,58 +8128,18 @@ app.post("/api/payments/:id/send-receipt", requireAuth, requireTenantUser, requi
     const emailHtml = buildPaymentReceiptEmailHtml(receiptContext);
     const subject = `Comprobante de pago ${paymentId}`;
 
-    const sendgridResponse = await fetch("https://api.sendgrid.com/v3/mail/send", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${SENDGRID_API_KEY}`
-      },
-      body: JSON.stringify({
-        personalizations: [
-          {
-            to: [{ email: customerEmail }],
-            subject
-          }
-        ],
-        from: {
-          email: SENDGRID_FROM_EMAIL,
-          name: SENDGRID_FROM_NAME
-        },
-        reply_to: SENDGRID_REPLY_TO_EMAIL ? { email: SENDGRID_REPLY_TO_EMAIL } : undefined,
-        content: [
-          {
-            type: "text/html",
-            value: emailHtml
-          }
-        ],
-        attachments: [
-          {
-            content: pdfBuffer.toString("base64"),
-            filename: fileName,
-            type: "application/pdf",
-            disposition: "attachment"
-          }
-        ]
-      })
+    await sendEmailViaResend({
+      to: [customerEmail],
+      subject,
+      html: emailHtml,
+      text: `Adjuntamos tu comprobante de pago ${paymentId}.`,
+      attachments: [
+        {
+          filename: fileName,
+          content: pdfBuffer.toString("base64")
+        }
+      ]
     });
-
-    if (!sendgridResponse.ok) {
-      let message = `No se pudo enviar el comprobante (${sendgridResponse.status})`;
-      try {
-        const details = await sendgridResponse.json();
-        const errorText = details?.errors?.[0]?.message || details?.message;
-        if (errorText) {
-          message = errorText;
-        }
-      } catch (_error) {
-        const raw = await sendgridResponse.text();
-        if (raw) {
-          message = raw;
-        }
-      }
-
-      return res.status(502).json({ message });
-    }
 
     return res.status(200).json({
       ok: true,
@@ -6441,7 +8397,7 @@ app.post("/api/collection-notes", requireAuth, requireTenantUser, requireTenantW
   }
 });
 
-app.get("/api/notifications", requireAuth, requireTenantUser, async (req, res, next) => {
+app.get("/api/notifications", requireAuth, async (req, res, next) => {
   try {
     const status = String(req.query.status || "all").trim().toLowerCase();
     const severity = String(req.query.severity || "all").trim().toLowerCase();
@@ -6475,7 +8431,7 @@ app.get("/api/notifications", requireAuth, requireTenantUser, async (req, res, n
   }
 });
 
-app.patch("/api/notifications/:id/read", requireAuth, requireTenantUser, async (req, res, next) => {
+app.patch("/api/notifications/:id/read", requireAuth, async (req, res, next) => {
   try {
     const notificationId = String(req.params.id || "").trim();
     if (!notificationId) {
@@ -6483,13 +8439,18 @@ app.patch("/api/notifications/:id/read", requireAuth, requireTenantUser, async (
     }
 
     const now = isoNow();
-    const { data, error } = await supabase
+    let query = supabase
       .from("notifications")
       .update({ status: "read", read_at: now, updated_at: now })
-      .eq("id", notificationId)
-      .eq("tenant_id", req.user.tenantId)
-      .select("id")
-      .maybeSingle();
+      .eq("id", notificationId);
+
+    query = isSuperadminRole(req.user.role)
+      ? query
+      : query
+        .eq("tenant_id", req.user.tenantId)
+        .neq("type", "tenant_signup_alert");
+
+    const { data, error } = await query.select("id").maybeSingle();
 
     if (error) {
       if (String(error.code || "") === "42P01") {
@@ -6508,14 +8469,21 @@ app.patch("/api/notifications/:id/read", requireAuth, requireTenantUser, async (
   }
 });
 
-app.post("/api/notifications/read-all", requireAuth, requireTenantUser, async (req, res, next) => {
+app.post("/api/notifications/read-all", requireAuth, async (req, res, next) => {
   try {
     const now = isoNow();
-    const { error } = await supabase
+    let query = supabase
       .from("notifications")
       .update({ status: "read", read_at: now, updated_at: now })
-      .eq("tenant_id", req.user.tenantId)
       .eq("status", "unread");
+
+    query = isSuperadminRole(req.user.role)
+      ? query.or("tenant_id.is.null,type.eq.tenant_signup_alert")
+      : query
+        .eq("tenant_id", req.user.tenantId)
+        .neq("type", "tenant_signup_alert");
+
+    const { error } = await query;
 
     if (error) {
       if (String(error.code || "") === "42P01") {
@@ -6530,16 +8498,19 @@ app.post("/api/notifications/read-all", requireAuth, requireTenantUser, async (r
   }
 });
 
-app.get("/api/push/status", requireAuth, requireTenantUser, async (req, res, next) => {
+app.get("/api/push/status", requireAuth, async (req, res, next) => {
   try {
-    const { data, error } = await supabase
+    const scopedTenantId = await resolvePreferredPushTenantScopeForUser(req.user);
+    let query = supabase
       .from("push_subscriptions")
       .select("id,timezone,updated_at")
-      .eq("tenant_id", req.user.tenantId)
       .eq("user_id", req.user.id)
       .eq("enabled", true)
       .order("updated_at", { ascending: false })
       .limit(3);
+
+    query = scopedTenantId ? query.eq("tenant_id", scopedTenantId) : query.is("tenant_id", null);
+    const { data, error } = await query;
 
     if (error) {
       if (isSchemaMissingError(error)) {
@@ -6574,7 +8545,7 @@ app.get("/api/push/status", requireAuth, requireTenantUser, async (req, res, nex
   }
 });
 
-app.post("/api/push/subscribe", requireAuth, requireTenantUser, async (req, res, next) => {
+app.post("/api/push/subscribe", requireAuth, async (req, res, next) => {
   try {
     if (!HAS_WEB_PUSH_CONFIG) {
       return res.status(503).json({ message: "Push no configurado en el servidor. Define PUSH_VAPID_PUBLIC_KEY y PUSH_VAPID_PRIVATE_KEY." });
@@ -6590,9 +8561,10 @@ app.post("/api/push/subscribe", requireAuth, requireTenantUser, async (req, res,
     const userAgent = String(req.get("user-agent") || "").slice(0, 255);
     const endpointHash = pushSubscriptionDeviceHash(subscription);
     const now = isoNow();
+    const scopedTenantId = await resolvePreferredPushTenantScopeForUser(req.user);
     const id = `PSH-${crypto
       .createHash("sha256")
-      .update(`${req.user.tenantId}|${req.user.id}|${endpointHash}`)
+      .update(`${scopedTenantId || "platform"}|${req.user.id}|${endpointHash}`)
       .digest("hex")
       .slice(0, 24)}`;
 
@@ -6602,7 +8574,7 @@ app.post("/api/push/subscribe", requireAuth, requireTenantUser, async (req, res,
         [
           {
             id,
-            tenant_id: req.user.tenantId,
+            tenant_id: scopedTenantId,
             user_id: req.user.id,
             endpoint: subscription.endpoint,
             endpoint_hash: endpointHash,
@@ -6641,16 +8613,18 @@ app.post("/api/push/subscribe", requireAuth, requireTenantUser, async (req, res,
   }
 });
 
-app.post("/api/push/unsubscribe", requireAuth, requireTenantUser, async (req, res, next) => {
+app.post("/api/push/unsubscribe", requireAuth, async (req, res, next) => {
   try {
     const endpoint = String(req.body?.endpoint || "").trim();
     const now = isoNow();
+    const scopedTenantId = await resolvePreferredPushTenantScopeForUser(req.user);
     let query = supabase
       .from("push_subscriptions")
       .update({ enabled: false, updated_at: now })
-      .eq("tenant_id", req.user.tenantId)
       .eq("user_id", req.user.id)
       .eq("enabled", true);
+
+    query = scopedTenantId ? query.eq("tenant_id", scopedTenantId) : query.is("tenant_id", null);
 
     if (endpoint) {
       query = query.eq("endpoint", endpoint);
@@ -6670,13 +8644,14 @@ app.post("/api/push/unsubscribe", requireAuth, requireTenantUser, async (req, re
   }
 });
 
-app.post("/api/push/test", requireAuth, requireTenantUser, async (req, res, next) => {
+app.post("/api/push/test", requireAuth, async (req, res, next) => {
   try {
     if (!HAS_WEB_PUSH_CONFIG) {
       return res.status(503).json({ message: "Push no configurado en el servidor. Define PUSH_VAPID_PUBLIC_KEY y PUSH_VAPID_PRIVATE_KEY." });
     }
 
-    const subscriptions = await listPushSubscriptionsForUser(req.user.tenantId, req.user.id);
+    const scopedTenantId = await resolvePreferredPushTenantScopeForUser(req.user);
+    const subscriptions = await listPushSubscriptionsForUser(scopedTenantId, req.user.id);
     if (subscriptions === null) {
       return res.status(503).json({ message: "Tablas de push no encontradas. Ejecuta supabase_schema.sql para habilitar notificaciones push." });
     }
@@ -6685,9 +8660,26 @@ app.post("/api/push/test", requireAuth, requireTenantUser, async (req, res, next
     }
 
     const timezone = sanitizePushTimezone(req.body?.timezone || subscriptions[0]?.timezone, "America/Santo_Domingo");
-    const state = await readStateForUser(req.user);
-    const summary = buildDailyCollectionSummaryFromState(state, timezone, new Date());
-    const payload = buildPushPayload(summary, req.user.tenantName || "CrediSync");
+    let payload;
+    if (isSuperadminRole(req.user.role)) {
+      payload = buildPushPayloadFromNotification({
+        code: `push-test-${Date.now()}`,
+        type: "tenant_signup_alert",
+        title: "Prueba push de superadmin",
+        message: "Las notificaciones push para nuevos clientes estan activas en este dispositivo.",
+        entityId: "TEN-DEMO",
+        meta: {
+          tenantId: "TEN-DEMO",
+          tenantName: "Cliente de prueba",
+          ownerEmail: req.user.email || ""
+        }
+      });
+    } else {
+      const state = await readStateForUser(req.user);
+      const summary = buildDailyCollectionSummaryFromState(state, timezone, new Date());
+      payload = buildPushPayload(summary, req.user.tenantName || "CrediSync");
+    }
+
     const results = await Promise.all(subscriptions.map((entry) => sendPushToSubscription(entry, payload)));
     const counters = summarizePushSendResults(results);
 
@@ -7059,6 +9051,7 @@ app.put("/api/superadmin/plans/:id", requireAuth, requireSuperadmin, async (req,
     });
 
     invalidateSubscriptionPlanCache();
+    await syncAllTenantSubscriptionsToUnifiedPlan();
 
     return res.json({ plan: mapPlanRow(data, nextPlan) });
   } catch (error) {
@@ -7068,42 +9061,28 @@ app.put("/api/superadmin/plans/:id", requireAuth, requireSuperadmin, async (req,
 
 app.get("/api/superadmin/subscriptions", requireAuth, requireSuperadmin, async (req, res, next) => {
   try {
-    const [tenantsResult, usersResult, subscriptionsResult, plansResult, invoicesResult] = await Promise.all([
+    await syncAllTenantSubscriptionLifecycles({ force: true });
+
+    const [tenantsResult, usersResult, invoicesResult, plans] = await Promise.all([
       supabase.from("tenants").select("id,name,status,created_at"),
       supabase
         .from("users")
         .select("id,email,name,role,status,tenant_id,created_at,last_login_at")
         .order("created_at", { ascending: true }),
       supabase
-        .from("tenant_subscriptions")
-        .select(
-          "id,tenant_id,plan_id,status,billing_cycle,currency,current_period_start,current_period_end,next_billing_date,trial_ends_at,suspended_at,cancelled_at,notes,created_at,updated_at"
-        ),
-      supabase
-        .from("subscription_plans")
-        .select("id,code,name,description,price_monthly,currency,billing_cycle,is_active,features,limits,created_at,updated_at"),
-      supabase
         .from("billing_invoices")
-        .select("id,tenant_id,status,due_date,amount,currency,created_at")
+        .select("id,tenant_id,subscription_id,plan_id,period_start,period_end,amount,currency,status,due_date,issued_at,paid_at,reference,notes,created_at,updated_at")
         .order("created_at", { ascending: false })
-        .limit(600)
+        .limit(1000),
+      ensureDefaultSubscriptionPlans()
     ]);
 
     if (tenantsResult.error) throw tenantsResult.error;
     if (usersResult.error) throw usersResult.error;
-    if (subscriptionsResult.error && !["42P01", "42703"].includes(String(subscriptionsResult.error.code || ""))) {
-      throw subscriptionsResult.error;
-    }
-    if (plansResult.error && !["42P01", "42703"].includes(String(plansResult.error.code || ""))) {
-      throw plansResult.error;
-    }
     if (invoicesResult.error && !["42P01", "42703"].includes(String(invoicesResult.error.code || ""))) {
       throw invoicesResult.error;
     }
 
-    const plans = (plansResult.data || []).map((row) => mapPlanRow(row));
-    const plansById = new Map(plans.map((plan) => [plan.id, plan]));
-    const subscriptionsByTenant = new Map((subscriptionsResult.data || []).map((row) => [row.tenant_id, row]));
     const usersByTenant = new Map();
 
     (usersResult.data || []).forEach((row) => {
@@ -7117,27 +9096,43 @@ app.get("/api/superadmin/subscriptions", requireAuth, requireSuperadmin, async (
     });
 
     const latestInvoiceByTenant = new Map();
+    const billingByTenant = new Map();
     (invoicesResult.data || []).forEach((row) => {
-      if (!latestInvoiceByTenant.has(row.tenant_id)) {
-        latestInvoiceByTenant.set(row.tenant_id, mapInvoiceRow(row));
+      const invoice = mapInvoiceRow(row);
+      if (!latestInvoiceByTenant.has(invoice.tenantId)) {
+        latestInvoiceByTenant.set(invoice.tenantId, invoice);
       }
+
+      const bucket = billingByTenant.get(invoice.tenantId) || {
+        outstandingBalance: 0,
+        overdueBalance: 0,
+        unpaidInvoicesCount: 0,
+        overdueInvoicesCount: 0
+      };
+
+      if (OUTSTANDING_BILLING_INVOICE_STATUSES.has(invoice.status)) {
+        bucket.outstandingBalance += Number(invoice.amount || 0);
+        bucket.unpaidInvoicesCount += 1;
+      }
+
+      if (invoice.status === "overdue") {
+        bucket.overdueBalance += Number(invoice.amount || 0);
+        bucket.overdueInvoicesCount += 1;
+      }
+
+      billingByTenant.set(invoice.tenantId, bucket);
     });
 
     const subscriptions = [];
     for (const tenant of tenantsResult.data || []) {
-      const row = subscriptionsByTenant.get(tenant.id) || null;
       const tenantUsers = usersByTenant.get(tenant.id) || [];
+      const isProtected = tenantUsers.some((user) => isSuperadminRole(user.role || ""));
       const ownerUser =
         tenantUsers.find((user) => !isSuperadminRole(user.role || "")) ||
         tenantUsers[0] ||
         null;
-      let summary;
-      if (!row) {
-        summary = await ensureTenantSubscription(tenant.id);
-      } else {
-        const plan = plansById.get(row.plan_id) || null;
-        summary = mapSubscriptionRow(row, plan);
-      }
+      await syncTenantSubscriptionToUnifiedPlan(tenant.id);
+      const summary = await ensureTenantSubscription(tenant.id);
 
       subscriptions.push({
         tenant: {
@@ -7148,10 +9143,17 @@ app.get("/api/superadmin/subscriptions", requireAuth, requireSuperadmin, async (
           usersCount: tenantUsers.length,
           ownerName: ownerUser ? ownerUser.name : null,
           ownerEmail: ownerUser ? ownerUser.email : null,
-          ownerLastLoginAt: ownerUser ? ownerUser.last_login_at || null : null
+          ownerLastLoginAt: ownerUser ? ownerUser.last_login_at || null : null,
+          isProtected
         },
         subscription: summary,
-        latestInvoice: latestInvoiceByTenant.get(tenant.id) || null
+        latestInvoice: latestInvoiceByTenant.get(tenant.id) || null,
+        billing: billingByTenant.get(tenant.id) || {
+          outstandingBalance: 0,
+          overdueBalance: 0,
+          unpaidInvoicesCount: 0,
+          overdueInvoicesCount: 0
+        }
       });
     }
 
@@ -7240,42 +9242,19 @@ app.put("/api/superadmin/tenants/:tenantId/subscription", requireAuth, requireSu
     }
 
     const current = await ensureTenantSubscription(tenantId);
-    const availablePlans = await ensureDefaultSubscriptionPlans();
-    const hasPlanIdInput = Object.prototype.hasOwnProperty.call(req.body || {}, "planId");
-    const hasPlanCodeInput = Object.prototype.hasOwnProperty.call(req.body || {}, "planCode");
-    const requestedPlanInput = String(hasPlanIdInput ? req.body.planId : hasPlanCodeInput ? req.body.planCode : "").trim();
-    if ((hasPlanIdInput || hasPlanCodeInput) && !requestedPlanInput) {
-      return res.status(400).json({ message: "Plan invalido" });
-    }
-
-    const requestedPlanValue = String(requestedPlanInput || current.planId || "").trim();
-    const requestedPlanCode = requestedPlanValue.toLowerCase();
-    const selectedPlan =
-      availablePlans.find(
-        (item) => String(item.id || "") === requestedPlanValue || String(item.code || "").toLowerCase() === requestedPlanCode
-      ) ||
-      (await loadSubscriptionPlanById(requestedPlanValue)) ||
-      (await loadSubscriptionPlanByCode(requestedPlanCode));
-
-    if (!selectedPlan) {
-      return res.status(400).json({ message: "Plan invalido" });
-    }
+    const selectedPlan = (await ensureDefaultSubscriptionPlans())[0] || defaultSubscriptionPlans()[0];
 
     const nextStatus = normalizeSubscriptionStatus(req.body.status, current.status);
     const fallbackPeriodStart = String(current.currentPeriodStart || isoToday()).trim() || isoToday();
-    const fallbackPeriodEnd = String(current.currentPeriodEnd || addDaysToDateKey(fallbackPeriodStart, DEFAULT_BILLING_PERIOD_DAYS)).trim()
-      || addDaysToDateKey(fallbackPeriodStart, DEFAULT_BILLING_PERIOD_DAYS);
+    const fallbackPeriodEnd = String(current.currentPeriodEnd || buildBillingWindow(fallbackPeriodStart).end).trim()
+      || buildBillingWindow(fallbackPeriodStart).end;
     const fallbackNextBilling = String(current.nextBillingDate || fallbackPeriodEnd).trim() || fallbackPeriodEnd;
-    const fallbackTrialEnds = String(current.trialEndsAt || addDaysToDateKey(fallbackPeriodStart, DEFAULT_TRIAL_DAYS)).trim()
-      || addDaysToDateKey(fallbackPeriodStart, DEFAULT_TRIAL_DAYS);
 
     const currentPeriodStart = String(req.body.currentPeriodStart || fallbackPeriodStart).trim() || fallbackPeriodStart;
     const currentPeriodEnd = String(req.body.currentPeriodEnd || fallbackPeriodEnd).trim() || fallbackPeriodEnd;
     const nextBillingDate = String(req.body.nextBillingDate || fallbackNextBilling).trim() || fallbackNextBilling;
-    const trialEndsAt = String(req.body.trialEndsAt || fallbackTrialEnds).trim() || fallbackTrialEnds;
     const notes = String(req.body.notes == null ? current.notes : req.body.notes).trim();
     const suspendedAt = nextStatus === "suspended" ? (current.suspendedAt || isoNow()) : null;
-    const cancelledAt = nextStatus === "cancelled" ? (current.cancelledAt || isoNow()) : null;
 
     const payload = {
       id: current.id || `SUB-${numericId()}`,
@@ -7287,9 +9266,9 @@ app.put("/api/superadmin/tenants/:tenantId/subscription", requireAuth, requireSu
       current_period_start: currentPeriodStart,
       current_period_end: currentPeriodEnd,
       next_billing_date: nextBillingDate,
-      trial_ends_at: trialEndsAt,
+      trial_ends_at: null,
       suspended_at: suspendedAt,
-      cancelled_at: cancelledAt,
+      cancelled_at: null,
       notes,
       updated_at: isoNow()
     };
@@ -7317,7 +9296,6 @@ app.put("/api/superadmin/tenants/:tenantId/subscription", requireAuth, requireSu
         planId: payload.plan_id,
         status: payload.status,
         nextBillingDate: payload.next_billing_date,
-        trialEndsAt: payload.trial_ends_at,
         notes: payload.notes
       }
     });
@@ -7346,7 +9324,7 @@ app.post("/api/superadmin/tenants/:tenantId/invoices", requireAuth, requireSuper
     const dueDate = String(req.body.dueDate || subscription.nextBillingDate || addDaysToDateKey(isoToday(), 5)).trim();
     const periodStart = String(req.body.periodStart || subscription.currentPeriodStart || isoToday()).trim();
     const periodEnd = String(req.body.periodEnd || subscription.currentPeriodEnd || addDaysToDateKey(periodStart, DEFAULT_BILLING_PERIOD_DAYS)).trim();
-    const notes = String(req.body.notes || "").trim();
+    const notes = String(req.body.notes || "").trim() || DEFAULT_BILLING_INVOICE_NOTE;
     const initialInvoiceStatus = dueDate && dueDate < isoToday() ? "overdue" : "pending";
 
     if (amount <= 0) {
@@ -7365,7 +9343,7 @@ app.post("/api/superadmin/tenants/:tenantId/invoices", requireAuth, requireSuper
       status: initialInvoiceStatus,
       due_date: dueDate,
       issued_at: isoNow(),
-      reference: String(req.body.reference || "").trim(),
+      reference: "",
       notes
     };
 
@@ -7392,7 +9370,188 @@ app.post("/api/superadmin/tenants/:tenantId/invoices", requireAuth, requireSuper
       afterData: invoicePayload
     });
 
-    return res.status(201).json({ invoice: mapInvoiceRow(data) });
+    const invoice = mapInvoiceRow(data);
+    let emailDelivery = {
+      attempted: false,
+      sent: false,
+      sentTo: null,
+      message: "Envio automatico deshabilitado"
+    };
+
+    if (BILLING_AUTO_EMAIL_ENABLED) {
+      try {
+        const invoiceEmailContext = await buildBillingInvoiceEmailContext(tenantId, data);
+        emailDelivery = {
+          attempted: true,
+          sent: false,
+          sentTo: invoiceEmailContext.ownerEmail || null,
+          message: "No se pudo resolver el correo del propietario del tenant"
+        };
+
+        if (invoiceEmailContext.ownerEmail) {
+          await sendBillingInvoiceEmail(invoiceEmailContext);
+          emailDelivery = {
+            attempted: true,
+            sent: true,
+            sentTo: invoiceEmailContext.ownerEmail,
+            message: "Factura enviada correctamente al propietario del tenant"
+          };
+        }
+      } catch (emailError) {
+        emailDelivery = {
+          attempted: true,
+          sent: false,
+          sentTo: emailDelivery.sentTo,
+          message: emailError?.message || "No se pudo enviar la factura por correo"
+        };
+      }
+    }
+
+    return res.status(201).json({ invoice, emailDelivery });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get("/api/superadmin/invoices/:invoiceId/pdf", requireAuth, requireSuperadmin, async (req, res, next) => {
+  try {
+    const invoiceId = String(req.params.invoiceId || "").trim();
+    if (!invoiceId) {
+      return res.status(400).json({ message: "Factura invalida" });
+    }
+
+    const { data, error } = await supabase
+      .from("billing_invoices")
+      .select("id,tenant_id,subscription_id,plan_id,period_start,period_end,amount,currency,status,due_date,issued_at,paid_at,reference,notes,created_at,updated_at")
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    if (error) {
+      if (["42P01", "42703"].includes(String(error.code || ""))) {
+        return res.status(503).json({ message: "Facturacion no habilitada. Ejecuta supabase_schema.sql." });
+      }
+      throw error;
+    }
+
+    if (!data) {
+      return res.status(404).json({ message: "Factura no encontrada" });
+    }
+
+    const invoiceContext = await buildBillingInvoiceEmailContext(data.tenant_id, data);
+    const pdfBuffer = await generateBillingInvoicePdfBuffer(invoiceContext);
+    const fileName = `factura-${invoiceId}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    return res.status(200).send(pdfBuffer);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get("/api/superadmin/invoice-pdf/:invoiceId", requireAuth, requireSuperadmin, async (req, res, next) => {
+  try {
+    const invoiceId = String(req.params.invoiceId || "").trim();
+    if (!invoiceId) {
+      return res.status(400).json({ message: "Factura invalida" });
+    }
+
+    const { data, error } = await supabase
+      .from("billing_invoices")
+      .select("id,tenant_id,subscription_id,plan_id,period_start,period_end,amount,currency,status,due_date,issued_at,paid_at,reference,notes,created_at,updated_at")
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    if (error) {
+      if (["42P01", "42703"].includes(String(error.code || ""))) {
+        return res.status(503).json({ message: "Facturacion no habilitada. Ejecuta supabase_schema.sql." });
+      }
+      throw error;
+    }
+
+    if (!data) {
+      return res.status(404).json({ message: "Factura no encontrada" });
+    }
+
+    const invoiceContext = await buildBillingInvoiceEmailContext(data.tenant_id, data);
+    const pdfBuffer = await generateBillingInvoicePdfBuffer(invoiceContext);
+    const fileName = `factura-${invoiceId}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    return res.status(200).send(pdfBuffer);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get("/api/invoice-pdf/:invoiceId", requireAuth, requireSuperadmin, async (req, res, next) => {
+  try {
+    const invoiceId = String(req.params.invoiceId || "").trim();
+    if (!invoiceId) {
+      return res.status(400).json({ message: "Factura invalida" });
+    }
+
+    const { data, error } = await supabase
+      .from("billing_invoices")
+      .select("id,tenant_id,subscription_id,plan_id,period_start,period_end,amount,currency,status,due_date,issued_at,paid_at,reference,notes,created_at,updated_at")
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    if (error) {
+      if (["42P01", "42703"].includes(String(error.code || ""))) {
+        return res.status(503).json({ message: "Facturacion no habilitada. Ejecuta supabase_schema.sql." });
+      }
+      throw error;
+    }
+
+    if (!data) {
+      return res.status(404).json({ message: "Factura no encontrada" });
+    }
+
+    const invoiceContext = await buildBillingInvoiceEmailContext(data.tenant_id, data);
+    const pdfBuffer = await generateBillingInvoicePdfBuffer(invoiceContext);
+    const fileName = `factura-${invoiceId}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    return res.status(200).send(pdfBuffer);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get("/api/superadmin/invoices-pdf/:invoiceId", requireAuth, requireSuperadmin, async (req, res, next) => {
+  try {
+    const invoiceId = String(req.params.invoiceId || "").trim();
+    if (!invoiceId) {
+      return res.status(400).json({ message: "Factura invalida" });
+    }
+
+    const { data, error } = await supabase
+      .from("billing_invoices")
+      .select("id,tenant_id,subscription_id,plan_id,period_start,period_end,amount,currency,status,due_date,issued_at,paid_at,reference,notes,created_at,updated_at")
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    if (error) {
+      if (["42P01", "42703"].includes(String(error.code || ""))) {
+        return res.status(503).json({ message: "Facturacion no habilitada. Ejecuta supabase_schema.sql." });
+      }
+      throw error;
+    }
+
+    if (!data) {
+      return res.status(404).json({ message: "Factura no encontrada" });
+    }
+
+    const invoiceContext = await buildBillingInvoiceEmailContext(data.tenant_id, data);
+    const pdfBuffer = await generateBillingInvoicePdfBuffer(invoiceContext);
+    const fileName = `factura-${invoiceId}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    return res.status(200).send(pdfBuffer);
   } catch (error) {
     return next(error);
   }
@@ -7421,9 +9580,17 @@ app.post("/api/superadmin/invoices/:invoiceId/payments", requireAuth, requireSup
     }
 
     const amount = round2(parseNumericInput(req.body.amount, NaN));
-    const method = String(req.body.method || "Transferencia").trim();
-    const reference = String(req.body.reference || "").trim();
-    const notes = String(req.body.notes || "").trim();
+    const method = normalizeBillingPaymentMethod(req.body.method);
+    const proofPayload = method === "Transferencia" ? parseBillingPaymentProofPayload(req.body) : null;
+    const reference = method === "Efectivo"
+      ? DEFAULT_CASH_PAYMENT_REFERENCE
+      : String(proofPayload?.proofImageName || req.body.reference || DEFAULT_TRANSFER_PAYMENT_REFERENCE).trim();
+    const notes = buildBillingPaymentStoredNotes({
+      publicNote: "",
+      proofImageData: proofPayload?.proofImageData || "",
+      proofImageName: proofPayload?.proofImageName || "",
+      proofImageType: proofPayload?.proofImageType || ""
+    });
 
     if (!Number.isFinite(amount) || amount <= 0) {
       return res.status(400).json({ message: "El monto del pago debe ser mayor a cero" });
@@ -7466,7 +9633,7 @@ app.post("/api/superadmin/invoices/:invoiceId/payments", requireAuth, requireSup
     const settlementAfter = await summarizeInvoiceBalance(invoiceId);
     const settlementResult = await applyInvoiceSettlement(invoiceRow.tenant_id, settlementAfter, {
       activateOnPaid: true,
-      markPastDueWhenUnpaid: false
+      suspendWhenUnpaid: false
     });
 
     await recordPlatformAuditLog({
@@ -7487,19 +9654,62 @@ app.post("/api/superadmin/invoices/:invoiceId/payments", requireAuth, requireSup
       }
     });
 
+    const updatedInvoice = settlementResult.invoice || invoiceRow;
     const updatedSubscription = await ensureTenantSubscription(invoiceRow.tenant_id);
+    let emailDelivery = {
+      attempted: false,
+      sent: false,
+      sentTo: null,
+      message: "Envio automatico deshabilitado"
+    };
+
+    if (BILLING_AUTO_EMAIL_ENABLED) {
+      try {
+        const paymentEmailContext = await buildBillingPaymentEmailContext(
+          invoiceRow.tenant_id,
+          updatedInvoice,
+          paymentRow,
+          settlementAfter
+        );
+        emailDelivery = {
+          attempted: true,
+          sent: false,
+          sentTo: paymentEmailContext.ownerEmail || null,
+          message: "No se pudo resolver el correo del propietario del tenant"
+        };
+
+        if (paymentEmailContext.ownerEmail) {
+          await sendBillingPaymentConfirmationEmail(paymentEmailContext);
+          emailDelivery = {
+            attempted: true,
+            sent: true,
+            sentTo: paymentEmailContext.ownerEmail,
+            message: "Confirmacion de pago enviada correctamente al propietario del tenant"
+          };
+        }
+      } catch (emailError) {
+        emailDelivery = {
+          attempted: true,
+          sent: false,
+          sentTo: emailDelivery.sentTo,
+          message: emailError?.message || "No se pudo enviar la confirmacion de pago por correo"
+        };
+      }
+    }
+
     return res.status(201).json({
       payment: mapBillingPaymentRow(paymentRow),
-      invoice: mapInvoiceRow(settlementResult.invoice || invoiceRow),
+      invoice: mapInvoiceRow(updatedInvoice),
       settlement: settlementAfter
         ? {
-            amount: settlementAfter.amount,
-            confirmedPaidAmount: settlementAfter.confirmedPaidAmount,
-            outstandingAmount: settlementAfter.outstandingAmount,
-            status: settlementAfter.expectedStatus
-          }
+          amount: settlementAfter.amount,
+          confirmedPaidAmount: settlementAfter.confirmedPaidAmount,
+          outstandingAmount: settlementAfter.outstandingAmount,
+          status: settlementAfter.expectedStatus
+        }
         : null,
-      subscription: updatedSubscription
+      subscription: updatedSubscription,
+      emailDelivery
     });
   } catch (error) {
     if (error && error.status === 503) {
@@ -7557,7 +9767,7 @@ app.patch("/api/superadmin/payments/:paymentId/status", requireAuth, requireSupe
     const settlementAfter = await summarizeInvoiceBalance(paymentRow.invoice_id);
     const settlementResult = await applyInvoiceSettlement(paymentRow.tenant_id, settlementAfter, {
       activateOnPaid: true,
-      markPastDueWhenUnpaid: String(paymentRow.status || "").toLowerCase() === "confirmed" && nextStatus === "rejected"
+      suspendWhenUnpaid: String(paymentRow.status || "").toLowerCase() === "confirmed" && nextStatus === "rejected"
     });
 
     await recordPlatformAuditLog({
@@ -7581,11 +9791,11 @@ app.patch("/api/superadmin/payments/:paymentId/status", requireAuth, requireSupe
       invoice: settlementResult.invoice ? mapInvoiceRow(settlementResult.invoice) : null,
       settlement: settlementAfter
         ? {
-            amount: settlementAfter.amount,
-            confirmedPaidAmount: settlementAfter.confirmedPaidAmount,
-            outstandingAmount: settlementAfter.outstandingAmount,
-            status: settlementAfter.expectedStatus
-          }
+          amount: settlementAfter.amount,
+          confirmedPaidAmount: settlementAfter.confirmedPaidAmount,
+          outstandingAmount: settlementAfter.outstandingAmount,
+          status: settlementAfter.expectedStatus
+        }
         : null,
       subscription
     });
@@ -7618,7 +9828,7 @@ app.put("/api/settings", requireAuth, requireTenantUser, requireTenantWriteAcces
       autoApprovalScore: parseNumericInput(req.body.autoApprovalScore, 0),
       maxDebtToIncome: parseNumericInput(req.body.maxDebtToIncome, 0),
       capitalBudget: Math.max(parseNumericInput(req.body.capitalBudget, 0), 0),
-      currency: String(req.body.currency || 'USD').trim().toUpperCase()
+      currency: normalizeCurrency(req.body.currency, DEFAULT_SUBSCRIPTION_CURRENCY)
     };
 
     // Primero obtener los settings actuales para mantener standard_annual_rate si existe
@@ -7639,7 +9849,8 @@ app.put("/api/settings", requireAuth, requireTenantUser, requireTenantWriteAcces
       auto_approval_score: settings.autoApprovalScore,
       max_debt_to_income: settings.maxDebtToIncome,
       capital_budget: settings.capitalBudget,
-      currency: settings.currency
+      currency: settings.currency,
+      deleted_at: null
     };
 
     // Mantener standard_annual_rate si ya existe en la BD
@@ -7647,7 +9858,12 @@ app.put("/api/settings", requireAuth, requireTenantUser, requireTenantWriteAcces
       upsertData.standard_annual_rate = currentSettings.standard_annual_rate;
     }
 
-    const { error } = await supabase.from("tenant_settings").upsert(upsertData, { onConflict: "tenant_id" });
+    let { error } = await supabase.from("tenant_settings").upsert(upsertData, { onConflict: "tenant_id" });
+    if (error && String(error.code || "") === "42703") {
+      const legacyUpsertData = { ...upsertData };
+      delete legacyUpsertData.deleted_at;
+      ({ error } = await supabase.from("tenant_settings").upsert(legacyUpsertData, { onConflict: "tenant_id" }));
+    }
 
     if (error) {
       throw error;

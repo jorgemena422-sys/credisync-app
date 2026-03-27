@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 const ToastContext = createContext({ showToast: () => { } });
 
@@ -17,8 +17,18 @@ export const ToastProvider = ({ children }) => {
         }, 2500);
     }, []);
 
+    useEffect(() => {
+        return () => {
+            if (timerRef.current) {
+                clearTimeout(timerRef.current);
+            }
+        };
+    }, []);
+
+    const contextValue = useMemo(() => ({ showToast }), [showToast]);
+
     return (
-        <ToastContext.Provider value={{ showToast }}>
+        <ToastContext.Provider value={contextValue}>
             {children}
             <div id="toast" className={`toast ${!toast.visible ? 'hidden' : ''}`} role="status" aria-live="polite">
                 {toast.message}

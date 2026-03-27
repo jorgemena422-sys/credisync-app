@@ -1,43 +1,54 @@
 import React, { useEffect } from 'react';
-import { Badge } from './Layout';
 
-const Drawer = ({ isOpen, onClose, title, children }) => {
-  useEffect(() => {
-    const handleEscape = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    if (isOpen) {
-      document.addEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'hidden';
+export default function Drawer({ isOpen, onClose, title, children }) {
+    useEffect(() => {
+        const handleEscape = (event) => {
+            if (event.key === 'Escape') {
+                onClose();
+            }
+        };
+
+        if (!isOpen) {
+            return undefined;
+        }
+
+        document.addEventListener('keydown', handleEscape);
+        document.body.classList.add('drawer-open');
+
+        return () => {
+            document.removeEventListener('keydown', handleEscape);
+            document.body.classList.remove('drawer-open');
+        };
+    }, [isOpen, onClose]);
+
+    if (!isOpen) {
+        return null;
     }
-    return () => {
-      document.removeEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'unset';
-    };
-  }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+    const shortLabel = String(title || 'Nuevo').trim().charAt(0).toUpperCase() || 'N';
 
-  return (
-    <div className="drawer-overlay" onClick={onClose}>
-      <div className="drawer-content animate-slide-in" onClick={e => e.stopPropagation()}>
-        <div className="drawer-header">
-          <div className="drawer-header-title">
-            <h2>{title}</h2>
-            <Badge type="secondary" text="NUEVO" />
-          </div>
-          <button className="drawer-close" onClick={onClose}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
+    return (
+        <div className="drawer-overlay open" onClick={onClose}>
+            <aside className="drawer open" onClick={(event) => event.stopPropagation()}>
+                <span className="drawer-glow drawer-glow-top" />
+                <span className="drawer-glow drawer-glow-bottom" />
+
+                <header className="drawer-head">
+                    <div className="drawer-title-group">
+                        <div className="drawer-badge">{shortLabel}</div>
+                        <div className="drawer-title-copy">
+                            <p className="eyebrow">Flujo guiado</p>
+                            <h3>{title}</h3>
+                        </div>
+                    </div>
+
+                    <button type="button" className="drawer-close" onClick={onClose} aria-label="Cerrar panel">
+                        <span className="material-symbols-outlined">close</span>
+                    </button>
+                </header>
+
+                <div className="drawer-body">{children}</div>
+            </aside>
         </div>
-        <div className="drawer-body">
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default Drawer;
+    );
+}

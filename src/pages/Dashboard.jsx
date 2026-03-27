@@ -1,14 +1,16 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { money, loanNextDueDate, loanPendingInstallments, loanOutstanding, loanInstallment, capitalBudget, capitalCommittedFromLoans, capitalAvailable, capitalUsagePct, sum, formatDate, paymentBreakdown, nameFromEmail, startOfDay, loanLateFeePaid, round2, loanTotalPayable } from '../utils/helpers';
+import { money, loanNextDueDate, loanPendingInstallments, loanOutstanding, loanInstallment, capitalBudget, capitalCommittedFromLoans, capitalAvailable, capitalUsagePct, sum, formatDate, paymentBreakdown, nameFromEmail, startOfDay, loanLateFeePaid, round2, loanTotalPayable, isInterestOnlyBalloonLoan } from '../utils/helpers';
 import { Link } from 'react-router-dom';
 import { useDrawer } from '../context/DrawerContext';
+import { usePortfolioDerivedData } from '../hooks/usePortfolioDerivedData';
 
 export function statusTag(status, scope = 'default') {
     const normalizedStatus = String(status || '').toLowerCase();
     const defaultMap = {
         active: 'Activo',
         inactive: 'Inactivo',
+        suspended: 'Suspendido',
         pending: 'Pendiente',
         overdue: 'Vencido',
         paid: 'Pagado'
@@ -78,74 +80,78 @@ function CapitalGauge({ usage, committed, available, budget }) {
     );
 }
 
-function CustomCalendar({ loans, customers }) {
+function CustomCalendar({ loans, customersById }) {
     const [currentDate, setCurrentDate] = useState(startOfDay(new Date()));
     const [selectedDate, setSelectedDate] = useState(startOfDay(new Date()));
+    const today = useMemo(() => startOfDay(new Date()), []);
 
-    // Get basic calendar info
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0 = Sunday
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    
-    // Previous month days for padding
-    const daysInPrevMonth = new Date(year, month, 0).getDate();
-    
-    // Generate the grid array
-    const gridDays = [];
-    
-    // 1. Padding from previous month
-    for (let i = firstDayOfMonth - 1; i >= 0; i--) {
-        gridDays.push({
-            date: new Date(year, month - 1, daysInPrevMonth - i),
-            isCurrentMonth: false
-        });
-    }
-    
-    // 2. Current month days
-    for (let i = 1; i <= daysInMonth; i++) {
-        gridDays.push({
-            date: new Date(year, month, i),
-            isCurrentMonth: true
-        });
-    }
-    
-    // 3. Padding for next month to complete 6 weeks (42 days) if needed
-    const remainingDays = 42 - gridDays.length;
-    for (let i = 1; i <= remainingDays; i++) {
-        gridDays.push({
-            date: new Date(year, month + 1, i),
-            isCurrentMonth: false
-        });
-    }
+    const { year, month, gridDays } = useMemo(() => {
+        const computedYear = currentDate.getFullYear();
+        const computedMonth = currentDate.getMonth();
+        const firstDayOfMonth = new Date(computedYear, computedMonth, 1).getDay();
+        const daysInMonth = new Date(computedYear, computedMonth + 1, 0).getDate();
+        const daysInPrevMonth = new Date(computedYear, computedMonth, 0).getDate();
+        const days = [];
+
+        for (let index = firstDayOfMonth - 1; index >= 0; index -= 1) {
+            days.push({
+                date: new Date(computedYear, computedMonth - 1, daysInPrevMonth - index),
+                isCurrentMonth: false
+            });
+        }
+
+        for (let day = 1; day <= daysInMonth; day += 1) {
+            days.push({
+                date: new Date(computedYear, computedMonth, day),
+                isCurrentMonth: true
+            });
+        }
+
+        const remainingDays = 42 - days.length;
+        for (let day = 1; day <= remainingDays; day += 1) {
+            days.push({
+                date: new Date(computedYear, computedMonth + 1, day),
+                isCurrentMonth: false
+            });
+        }
+
+        return {
+            year: computedYear,
+            month: computedMonth,
+            gridDays: days
+        };
+    }, [currentDate]);
 
     // Build all pending installment dates to render every expected due day.
-    const dueEventsByDay = new Map();
-    loans
-        .filter(loan => loan.status !== 'paid')
-        .forEach((loan) => {
-            loanPendingInstallments(loan).forEach((installment) => {
-                const timestamp = installment.dueDate.getTime();
-                if (!dueEventsByDay.has(timestamp)) {
-                    dueEventsByDay.set(timestamp, []);
-                }
-                dueEventsByDay.get(timestamp).push({
-                    loan,
-                    installmentNumber: installment.installmentNumber,
-                    dueDate: installment.dueDate
+    const dueEventsByDay = useMemo(() => {
+        const map = new Map();
+        loans
+            .filter((loan) => loan.status !== 'paid')
+            .forEach((loan) => {
+                loanPendingInstallments(loan).forEach((installment) => {
+                    const timestamp = installment.dueDate.getTime();
+                    if (!map.has(timestamp)) {
+                        map.set(timestamp, []);
+                    }
+                    map.get(timestamp).push({
+                        loan,
+                        installmentNumber: installment.installmentNumber,
+                        dueDate: installment.dueDate
+                    });
                 });
             });
-        });
+        return map;
+    }, [loans]);
 
     const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
     const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
-    const isToday = (date) => date.getTime() === startOfDay(new Date()).getTime();
+    const isToday = (date) => date.getTime() === today.getTime();
     const isSelected = (date) => date.getTime() === selectedDate.getTime();
     
     const loansOnDate = (date) => dueEventsByDay.get(startOfDay(date).getTime()) || [];
 
     // Gather selected events
-    const selectedEvents = loansOnDate(selectedDate);
+    const selectedEvents = useMemo(() => loansOnDate(selectedDate), [selectedDate, dueEventsByDay]);
 
     const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
@@ -192,15 +198,16 @@ function CustomCalendar({ loans, customers }) {
                 
                 {selectedEvents.length > 0 ? (
                     selectedEvents.map((event) => {
-                        const customer = customers.find(c => c.id === event.loan.customerId);
+                        const customer = customersById.get(event.loan.customerId);
                         const estimatedInstallment = Math.min(loanInstallment(event.loan), loanOutstanding(event.loan));
+                        const isInterestOnly = isInterestOnlyBalloonLoan(event.loan);
                         return (
                             <div key={`${event.loan.id}-${event.installmentNumber}`} className="calendar-event-item">
                                 <div className="calendar-event-info">
                                     <strong>{customer ? nameFromEmail(customer.name) : 'Anónimo'}</strong>
-                                    <span>Préstamo {event.loan.id} · Cuota {event.installmentNumber}/{event.loan.termMonths}</span>
+                                    <span>Préstamo {event.loan.id} · {isInterestOnly ? 'Periodo' : 'Cuota'} {event.installmentNumber}/{event.loan.termMonths}</span>
                                 </div>
-                                <span className="calendar-event-amount" title="Cuota estimada">{money(estimatedInstallment)}</span>
+                                <span className="calendar-event-amount" title={isInterestOnly ? 'Interes estimado del periodo' : 'Cuota estimada'}>{money(estimatedInstallment)}</span>
                             </div>
                         );
                     })
@@ -217,54 +224,69 @@ function CustomCalendar({ loans, customers }) {
 export default function Dashboard() {
     const { state } = useApp();
     const { openDrawer } = useDrawer();
+    const { customersById } = usePortfolioDerivedData(state);
+    const today = useMemo(() => startOfDay(new Date()), []);
 
-    const activeCount = state.loans.filter(loan => loan.status === 'active').length;
-    const overdueCount = state.loans.filter(loan => loan.status === 'overdue').length;
-    const budget = capitalBudget(state);
-    const committed = capitalCommittedFromLoans(state.loans);
-    const available = capitalAvailable(state);
-    const usage = capitalUsagePct(state);
+    const dashboardSnapshot = useMemo(() => {
+        const activeCount = state.loans.filter((loan) => loan.status === 'active').length;
+        const overdueCount = state.loans.filter((loan) => loan.status === 'overdue').length;
+        const budget = capitalBudget(state);
+        const committed = capitalCommittedFromLoans(state.loans);
+        const available = capitalAvailable(state);
+        const usage = capitalUsagePct(state);
+        const totalOutstanding = sum(state.loans, (loan) => loanOutstanding(loan));
 
-    // Calculate broken down financials
-    const totalOutstanding = sum(state.loans, loan => loanOutstanding(loan));
-    
-    let totalPrincipalCollected = 0;
-    let totalInterestCollected = 0;
-    let totalLateFeeCollected = 0;
+        let totalPrincipalCollected = 0;
+        let totalInterestCollected = 0;
+        let totalLateFeeCollected = 0;
 
-    state.loans.forEach((loan) => {
-        const basePaid = Math.max(Math.min(Number(loan.paidAmount || 0), loanTotalPayable(loan)), 0);
-        const breakdown = paymentBreakdown(loan, basePaid);
-        totalPrincipalCollected += breakdown.principal;
-        totalInterestCollected += breakdown.interest;
-        totalLateFeeCollected += loanLateFeePaid(loan, state);
-    });
+        state.loans.forEach((loan) => {
+            const basePaid = Math.max(Math.min(Number(loan.paidAmount || 0), loanTotalPayable(loan)), 0);
+            const breakdown = paymentBreakdown(loan, basePaid);
+            totalPrincipalCollected += breakdown.principal;
+            totalInterestCollected += breakdown.interest;
+            totalLateFeeCollected += loanLateFeePaid(loan, state);
+        });
 
-    totalPrincipalCollected = round2(totalPrincipalCollected);
-    totalInterestCollected = round2(totalInterestCollected);
-    totalLateFeeCollected = round2(totalLateFeeCollected);
-    const totalInterestAndLateFeeCollected = round2(totalInterestCollected + totalLateFeeCollected);
+        const dueSoonRows = state.loans
+            .filter((loan) => {
+                if (loan.status === 'paid') return false;
+                const dueDate = loanNextDueDate(loan);
+                if (!dueDate) return false;
+                const diffDays = Math.floor((dueDate - today) / 86400000);
+                return diffDays <= 2;
+            })
+            .sort((left, right) => {
+                const firstDue = loanNextDueDate(left);
+                const secondDue = loanNextDueDate(right);
+                if (!firstDue) return 1;
+                if (!secondDue) return -1;
+                return firstDue - secondDue;
+            })
+            .slice(0, 8)
+            .map((loan) => ({
+                loan,
+                customer: customersById.get(loan.customerId) || null,
+                nextDueDate: loanNextDueDate(loan),
+                outstanding: loanOutstanding(loan)
+            }));
 
-    const rows = state.loans
-        .filter(loan => {
-            if (loan.status === 'paid') return false;
-            const dueDate = loanNextDueDate(loan);
-            if (!dueDate) return false;
+        return {
+            activeCount,
+            overdueCount,
+            budget,
+            committed,
+            available,
+            usage,
+            totalOutstanding,
+            totalPrincipalCollected: round2(totalPrincipalCollected),
+            totalInterestCollected: round2(totalInterestCollected),
+            totalLateFeeCollected: round2(totalLateFeeCollected),
+            dueSoonRows
+        };
+    }, [state, customersById, today]);
 
-            const today = startOfDay(new Date());
-            const diffDays = Math.floor((dueDate - today) / 86400000);
-            
-            // Show if it's overdue or due within 2 days
-            return diffDays <= 2;
-        })
-        .sort((a, b) => {
-            const d1 = loanNextDueDate(a);
-            const d2 = loanNextDueDate(b);
-            if (!d1) return 1;
-            if (!d2) return -1;
-            return d1 - d2;
-        })
-        .slice(0, 8);
+    const totalInterestAndLateFeeCollected = round2(dashboardSnapshot.totalInterestCollected + dashboardSnapshot.totalLateFeeCollected);
 
     return (
         <section id="view-dashboard" className="view dashboard-view">
@@ -288,10 +310,10 @@ export default function Dashboard() {
 
             {/* Main KPIs – Top Row: Key Financials */}
             <div className="dashboard-kpi-row kpi-grid">
-                <KpiCard label="Balance disponible" value={money(available)} tone="good" />
-                <KpiCard label="Capital cobrado" value={money(totalPrincipalCollected)} tone="neutral" />
+                <KpiCard label="Balance disponible" value={money(dashboardSnapshot.available)} tone="good" />
+                <KpiCard label="Capital cobrado" value={money(dashboardSnapshot.totalPrincipalCollected)} tone="neutral" />
                 <KpiCard label="Interes + mora ganados" value={money(totalInterestAndLateFeeCollected)} tone="good" />
-                <KpiCard label="Saldo por cobrar" value={money(totalOutstanding)} tone="warn" />
+                <KpiCard label="Saldo por cobrar" value={money(dashboardSnapshot.totalOutstanding)} tone="warn" />
             </div>
 
                 {/* Two Column: Operations + Capital */}
@@ -304,11 +326,11 @@ export default function Dashboard() {
                     </div>
                     <div className="dashboard-ops-grid">
                         <div className="dashboard-ops-stat">
-                            <span className="dashboard-ops-value">{activeCount}</span>
+                            <span className="dashboard-ops-value">{dashboardSnapshot.activeCount}</span>
                             <span className="dashboard-ops-label">Prestamos al dia</span>
                         </div>
                         <div className="dashboard-ops-stat dashboard-ops-stat-warn">
-                            <span className="dashboard-ops-value">{overdueCount}</span>
+                            <span className="dashboard-ops-value">{dashboardSnapshot.overdueCount}</span>
                             <span className="dashboard-ops-label">Prestamos en atraso</span>
                         </div>
                         <div className="dashboard-ops-stat">
@@ -322,21 +344,21 @@ export default function Dashboard() {
                     </div>
                     
                     <div style={{ marginTop: '0.5rem', borderTop: '1px solid var(--line-strong)'}}>
-                        <CustomCalendar loans={state.loans} customers={state.customers} />
+                        <CustomCalendar loans={state.loans} customersById={customersById} />
                     </div>
                 </div>
 
                 {/* Right (previously left): Capital Gauge */}
                 <div className="dashboard-capital-card card">
                     <CapitalGauge
-                        usage={usage}
-                        committed={committed}
-                        available={available}
-                        budget={budget}
+                        usage={dashboardSnapshot.usage}
+                        committed={dashboardSnapshot.committed}
+                        available={dashboardSnapshot.available}
+                        budget={dashboardSnapshot.budget}
                     />
                     <div className="dashboard-capital-budget">
                         <span className="muted small">Presupuesto asignado</span>
-                        <strong>{money(budget)}</strong>
+                        <strong>{money(dashboardSnapshot.budget)}</strong>
                     </div>
                 </div>
             </div>
@@ -360,14 +382,13 @@ export default function Dashboard() {
                             </tr>
                         </thead>
                         <tbody>
-                            {rows.length > 0 ? rows.map((loan, idx) => {
-                                const customer = state.customers.find(c => c.id === loan.customerId);
+                            {dashboardSnapshot.dueSoonRows.length > 0 ? dashboardSnapshot.dueSoonRows.map(({ loan, customer, nextDueDate, outstanding }) => {
                                 return (
                                     <tr key={loan.id}>
                                         <td data-label="ID">{loan.id}</td>
                                         <td data-label="Cliente">{customer ? customer.name : 'Sin cliente'}</td>
-                                        <td data-label="Proximo pago">{formatDate(loanNextDueDate(loan))}</td>
-                                        <td data-label="Saldo">{money(loanOutstanding(loan))}</td>
+                                        <td data-label="Proximo pago">{formatDate(nextDueDate)}</td>
+                                        <td data-label="Saldo">{money(outstanding)}</td>
                                         <td data-label="Estado">{statusTag(loan.status, 'loan')}</td>
                                         <td data-label="Accion">
                                             <Link to={`/loans?id=${loan.id}`} className="action-link">Ver</Link>

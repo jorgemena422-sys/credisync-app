@@ -1,6 +1,49 @@
-const BUILD_VERSION = '20260323124202550-go0uyi';
+const BUILD_VERSION = '20260327200152695-dztqop';
 const CACHE_NAME = `credisync-shell-${BUILD_VERSION}`;
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest'];
+
+async function cacheNavigationShell(response) {
+  if (!response || !response.ok) {
+    return response;
+  }
+
+  const cache = await caches.open(CACHE_NAME);
+  await Promise.all([
+    cache.put('/', response.clone()).catch(() => undefined),
+    cache.put('/index.html', response.clone()).catch(() => undefined)
+  ]);
+
+  return response;
+}
+
+function buildPushNotificationActions(payload) {
+  const actions = [];
+
+  if (payload?.primaryAction?.action && payload?.primaryAction?.title) {
+    actions.push({
+      action: payload.primaryAction.action,
+      title: payload.primaryAction.title
+    });
+  }
+
+  if (payload?.secondaryAction?.action && payload?.secondaryAction?.title) {
+    actions.push({
+      action: payload.secondaryAction.action,
+      title: payload.secondaryAction.title
+    });
+  }
+
+  if (actions.length === 0) {
+    actions.push(
+      { action: 'open-default', title: 'Ver' },
+      { action: 'dismiss', title: 'Cerrar' }
+    );
+  } else {
+    actions.push({ action: 'dismiss', title: 'Cerrar' });
+  }
+
+  return actions.slice(0, 3);
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -38,12 +81,13 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', clone)).catch(() => undefined);
-          return response;
+        .then((response) => cacheNavigationShell(response))
+        .catch(async () => {
+          const cachedResponse = await caches.match(request, { ignoreSearch: true })
+            || await caches.match('/')
+            || await caches.match('/index.html');
+          return cachedResponse;
         })
-        .catch(() => caches.match('/index.html'))
     );
   }
 });
@@ -60,20 +104,28 @@ self.addEventListener('push', (event) => {
   const body = payload.body || 'Tienes una actualizacion de cobranza';
   const url = payload.url || '/notifications';
   const tag = payload.tag || 'credisync-general';
+  const actions = buildPushNotificationActions(payload);
 
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      icon: '/icons/icon-512.png',
-      badge: '/icons/app-icon.svg',
+      icon: payload.icon || '/icons/icon-512.png',
+      badge: payload.badge || '/icons/app-icon.svg',
       tag,
-      renotify: true,
-      vibrate: [100, 50, 100, 50, 200],
-      data: { url },
-      actions: [
-        { action: 'open', title: 'Ver' },
-        { action: 'dismiss', title: 'Cerrar' }
-      ]
+      renotify: payload.renotify !== false,
+      requireInteraction: Boolean(payload.requireInteraction),
+      vibrate: Array.isArray(payload.vibrate) ? payload.vibrate : [100, 50, 100, 50, 200],
+      data: {
+        url,
+        actions: {
+          [payload.primaryAction?.action || '']: payload.primaryAction?.url || url,
+          [payload.secondaryAction?.action || '']: payload.secondaryAction?.url || '/notifications',
+          open_default: url
+        },
+        type: payload.type || 'general',
+        context: payload.context || {}
+      },
+      actions
     })
   );
 });
@@ -83,7 +135,9 @@ self.addEventListener('notificationclick', (event) => {
 
   if (event.action === 'dismiss') return;
 
-  const targetUrl = event.notification?.data?.url || '/notifications';
+  const data = event.notification?.data || {};
+  const actionMap = data.actions || {};
+  const targetUrl = actionMap[event.action] || actionMap.open_default || data.url || '/notifications';
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

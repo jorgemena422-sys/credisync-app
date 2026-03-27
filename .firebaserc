@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "default": "credisync-727b6"
+  },
+  "targets": {
+    "credisync-727b6": {
+      "hosting": {
+        "prod": [
+          "credisync-727b6"
+        ],
+        "staging": [
+          "credisync-727b6-staging"
+        ]
+      }
+    }
+  }
+}
